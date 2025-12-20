@@ -1,5 +1,6 @@
 using System;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Myra.Graphics2D.UI;
@@ -14,6 +15,7 @@ namespace Planet9.Scenes
         private Label? _titleLabel;
         private Label? _subtitleLabel;
         private Label? _instructionsLabel;
+        private SoundEffectInstance? _menuMusicInstance;
 
         public MainMenuScene(Game game) : base(game)
         {
@@ -74,7 +76,7 @@ namespace Planet9.Scenes
             // Instructions label
             _instructionsLabel = new Label
             {
-                Text = "Press ENTER to Start",
+                Text = "Press Any Key or Click to Start",
                 TextColor = Microsoft.Xna.Framework.Color.Yellow,
                 GridColumn = 0,
                 GridRow = 3,
@@ -84,18 +86,67 @@ namespace Planet9.Scenes
 
             _desktop.Root = grid;
             _previousKeyboardState = Keyboard.GetState();
+            
+            // Load and play main menu music
+            try
+            {
+                var menuMusicEffect = Content.Load<SoundEffect>("mainmenu1");
+                if (menuMusicEffect != null)
+                {
+                    _menuMusicInstance = menuMusicEffect.CreateInstance();
+                    _menuMusicInstance.IsLooped = true; // Loop the music
+                    _menuMusicInstance.Volume = 0.5f; // 50% volume
+                    _menuMusicInstance.Play();
+                    System.Console.WriteLine($"[MUSIC] Main menu music loaded and playing. State: {_menuMusicInstance.State}, Volume: {_menuMusicInstance.Volume}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"[MUSIC ERROR] Failed to load main menu music: {ex.Message}");
+            }
         }
 
         public override void Update(GameTime gameTime)
         {
+            // Restart music if it stops unexpectedly
+            if (_menuMusicInstance != null && _menuMusicInstance.State == SoundState.Stopped)
+            {
+                try
+                {
+                    _menuMusicInstance.Play();
+                    System.Console.WriteLine($"[MUSIC] Restarted main menu music (was stopped)");
+                }
+                catch (System.Exception ex)
+                {
+                    System.Console.WriteLine($"[MUSIC ERROR] Failed to restart: {ex.Message}");
+                }
+            }
+            
             var keyboardState = Keyboard.GetState();
+            var mouseState = Mouse.GetState();
 
             // Update Myra input
             _desktop?.UpdateInput();
 
-            if (keyboardState.IsKeyDown(Keys.Enter) && _previousKeyboardState.IsKeyUp(Keys.Enter))
+            // Check for any key press (except None)
+            bool anyKeyPressed = false;
+            foreach (Keys key in Enum.GetValues(typeof(Keys)))
             {
-                // Transition to game scene
+                if (key != Keys.None && keyboardState.IsKeyDown(key))
+                {
+                    anyKeyPressed = true;
+                    break;
+                }
+            }
+
+            // Check for any mouse button press
+            bool anyMouseButtonPressed = mouseState.LeftButton == ButtonState.Pressed ||
+                                       mouseState.RightButton == ButtonState.Pressed ||
+                                       mouseState.MiddleButton == ButtonState.Pressed;
+
+            if (anyKeyPressed || anyMouseButtonPressed)
+            {
+                // Transition to game scene on any input
                 var sceneManager = (SceneManager)Game.Services.GetService(typeof(SceneManager));
                 sceneManager?.ChangeScene(new GameScene(Game));
             }
@@ -109,6 +160,22 @@ namespace Planet9.Scenes
 
             // Render Myra UI
             _desktop?.Render();
+        }
+        
+        public override void UnloadContent()
+        {
+            // Stop music when leaving the scene
+            try
+            {
+                if (_menuMusicInstance != null)
+                {
+                    _menuMusicInstance.Stop();
+                    _menuMusicInstance.Dispose();
+                    _menuMusicInstance = null;
+                }
+            }
+            catch { }
+            base.UnloadContent();
         }
     }
 }

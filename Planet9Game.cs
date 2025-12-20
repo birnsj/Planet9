@@ -58,6 +58,20 @@ namespace Planet9
                 Services.AddService(typeof(Camera2D), _camera);
             }
 
+            // Load and set custom cursor
+            try
+            {
+                var cursorTexture = Content.Load<Texture2D>("cursor1");
+                // Create cursor from texture, using the center of the texture as the hotspot (0, 0)
+                var cursor = MouseCursor.FromTexture2D(cursorTexture, 0, 0);
+                Mouse.SetCursor(cursor);
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load custom cursor: {ex.Message}");
+                // Continue with default cursor if custom cursor fails to load
+            }
+
             // Load initial scene (main menu) after services are set up
             _sceneManager!.ChangeScene(new MainMenuScene(this));
         }

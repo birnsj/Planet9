@@ -9,8 +9,10 @@
     <File>D:/Projects/Planet9/Content/ship1.png</File>
     <File>D:/Projects/Planet9/Content/ship1-128.png</File>
     <File>D:/Projects/Planet9/Content/ship1-256.png</File>
+    <File>D:/Projects/Planet9/Content/cursor1.png</File>
   </SourceFiles>
   <DestFiles>
+    <File xsi:nil="true" />
     <File xsi:nil="true" />
     <File xsi:nil="true" />
     <File xsi:nil="true" />

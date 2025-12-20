@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Myra.Graphics2D.UI;
@@ -18,7 +19,12 @@ namespace Planet9.Scenes
         private const int TilesY = 4;
         private Texture2D? _gridPixelTexture;
         private int _gridSize = 128; // 128x128 grid cells (can be changed via slider)
-        private bool _gridVisible = true; // Grid visibility toggle
+        private bool _gridVisible = false; // Grid visibility toggle (default off)
+        private const float MapSize = 8192f; // Total map size
+        private const int MinimapSize = 200; // Minimap size in pixels (square)
+        private Texture2D? _minimapBackgroundTexture;
+        private Texture2D? _minimapPlayerDotTexture;
+        private Texture2D? _minimapViewportOutlineTexture;
         
         // Camera position and zoom
         private Vector2 _cameraPosition;
@@ -47,6 +53,7 @@ namespace Planet9.Scenes
         private TextButton? _gridSizeLeftButton;
         private TextButton? _gridSizeRightButton;
         private Label? _gridSizeLabel;
+        private CheckBox? _gridVisibleCheckBox;
         private HorizontalSlider? _panSpeedSlider;
         private Label? _panSpeedLabel;
         private HorizontalSlider? _inertiaSlider;
@@ -64,6 +71,19 @@ namespace Planet9.Scenes
         private bool _isPanningToPlayer = false;
         private bool _cameraFollowingPlayer = false; // Track if camera should follow player
         private float _cameraPanSpeed = 800f; // pixels per second for smooth panning (faster)
+        private Vector2 _cameraVelocity = Vector2.Zero; // Camera velocity for inertia
+        private float _cameraInertia = 0.85f; // Camera inertia factor (0 = no inertia, 1 = full inertia)
+        private HorizontalSlider? _cameraInertiaSlider;
+        private Label? _cameraInertiaLabel;
+        private HorizontalSlider? _aimRotationSpeedSlider;
+        private Label? _aimRotationSpeedLabel;
+        private SoundEffectInstance? _backgroundMusicInstance;
+        
+        // Ship preview screen
+        private bool _isPreviewActive = false;
+        private Desktop? _previewDesktop;
+        private Panel? _previewPanel;
+        private Label? _previewCoordinateLabel;
 
         public GameScene(Game game) : base(game)
         {
@@ -84,6 +104,24 @@ namespace Planet9.Scenes
                 System.Console.WriteLine($"Failed to load galaxy texture: {ex.Message}");
             }
             
+            // Load and play background music
+            try
+            {
+                var musicEffect = Content.Load<SoundEffect>("galaxy1");
+                if (musicEffect != null)
+                {
+                    _backgroundMusicInstance = musicEffect.CreateInstance();
+                    _backgroundMusicInstance.IsLooped = true; // Loop the music
+                    _backgroundMusicInstance.Volume = 0.5f; // 50% volume
+                    _backgroundMusicInstance.Play();
+                    System.Console.WriteLine($"[MUSIC] Galaxy music loaded and playing. State: {_backgroundMusicInstance.State}, Volume: {_backgroundMusicInstance.Volume}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"[MUSIC ERROR] Failed to load background music: {ex.Message}");
+            }
+            
             // Calculate map center position first
             const float mapSize = 8192f;
             var mapCenter = new Vector2(mapSize / 2f, mapSize / 2f);
@@ -98,6 +136,16 @@ namespace Planet9.Scenes
             // Create pixel texture for drawing grid lines (strong, visible color)
             _gridPixelTexture = new Texture2D(GraphicsDevice, 1, 1);
             _gridPixelTexture.SetData(new[] { new Color(150, 150, 150, 220) }); // Strong gray with high opacity
+            
+            // Create textures for minimap
+            _minimapBackgroundTexture = new Texture2D(GraphicsDevice, 1, 1);
+            _minimapBackgroundTexture.SetData(new[] { new Color(0, 0, 0, 200) }); // Semi-transparent black
+            
+            _minimapPlayerDotTexture = new Texture2D(GraphicsDevice, 1, 1);
+            _minimapPlayerDotTexture.SetData(new[] { Color.Cyan });
+            
+            _minimapViewportOutlineTexture = new Texture2D(GraphicsDevice, 1, 1);
+            _minimapViewportOutlineTexture.SetData(new[] { Color.White }); // White so color can be controlled via Draw parameter
             
             // Initialize UI for zoom display and ship controls
             _desktop = new Desktop();
@@ -126,6 +174,8 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Grid size buttons
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Pan speed label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Pan speed slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia slider
             
@@ -247,18 +297,38 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_cameraSpeedSlider);
             
-            // Grid size label - bright magenta for visibility
-            _gridSizeLabel = new Label
+            // Grid size controls container (label and checkbox in a horizontal layout)
+            var gridSizeControlsContainer = new HorizontalStackPanel
             {
-                Text = $"Grid Size: {_gridSize}",
-                TextColor = Color.Magenta,
                 GridColumn = 0,
                 GridRow = 7,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
             };
-            grid.Widgets.Add(_gridSizeLabel);
+            
+            // Grid size label - bright magenta for visibility
+            _gridSizeLabel = new Label
+            {
+                Text = $"Grid Size: {_gridSize}",
+                TextColor = Color.Magenta
+            };
+            gridSizeControlsContainer.Widgets.Add(_gridSizeLabel);
+            
+            // Grid visibility checkbox
+            _gridVisibleCheckBox = new CheckBox
+            {
+                Text = "Show Grid",
+                IsChecked = _gridVisible
+            };
+            _gridVisibleCheckBox.Click += (s, a) =>
+            {
+                _gridVisible = _gridVisibleCheckBox.IsChecked;
+            };
+            gridSizeControlsContainer.Widgets.Add(_gridVisibleCheckBox);
+            
+            grid.Widgets.Add(gridSizeControlsContainer);
             
             // Grid size arrow buttons container
             var gridSizeButtonContainer = new HorizontalStackPanel
@@ -345,13 +415,82 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_panSpeedSlider);
             
+            // Camera inertia label - bright cyan for visibility
+            _cameraInertiaLabel = new Label
+            {
+                Text = $"Camera Inertia: {_cameraInertia:F2}",
+                TextColor = Color.Cyan,
+                GridColumn = 0,
+                GridRow = 11,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            grid.Widgets.Add(_cameraInertiaLabel);
+            
+            // Camera inertia slider (0.0 = no inertia/instant stop, 0.995 = maximum inertia)
+            _cameraInertiaSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 0.995f,
+                Value = _cameraInertia,
+                Width = 200,
+                GridColumn = 0,
+                GridRow = 12,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _cameraInertiaSlider.ValueChanged += (s, a) =>
+            {
+                _cameraInertia = _cameraInertiaSlider.Value;
+                _cameraInertiaLabel.Text = $"Camera Inertia: {_cameraInertiaSlider.Value:F2}";
+            };
+            grid.Widgets.Add(_cameraInertiaSlider);
+            
+            // Aim rotation speed label - bright lime green for visibility
+            _aimRotationSpeedLabel = new Label
+            {
+                Text = $"Aim Rotation Speed: {(_playerShip?.AimRotationSpeed ?? 5f):F1}",
+                TextColor = Color.Lime,
+                GridColumn = 0,
+                GridRow = 13,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            grid.Widgets.Add(_aimRotationSpeedLabel);
+            
+            // Aim rotation speed slider (how fast ship rotates toward cursor when stationary)
+            _aimRotationSpeedSlider = new HorizontalSlider
+            {
+                Minimum = 1f,
+                Maximum = 20f,
+                Value = _playerShip?.AimRotationSpeed ?? 5f,
+                Width = 200,
+                GridColumn = 0,
+                GridRow = 14,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _aimRotationSpeedSlider.ValueChanged += (s, a) =>
+            {
+                if (_playerShip != null)
+                {
+                    _playerShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
+                    _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
+                }
+            };
+            grid.Widgets.Add(_aimRotationSpeedSlider);
+            
             // Inertia label - bright purple for visibility
             _inertiaLabel = new Label
             {
                 Text = $"Inertia: {(_playerShip?.Inertia ?? 0.9f):F2}",
                 TextColor = new Color(255, 100, 255), // Purple/magenta
                 GridColumn = 0,
-                GridRow = 11,
+                GridRow = 15,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -366,7 +505,7 @@ namespace Planet9.Scenes
                 Value = _playerShip?.Inertia ?? 0.9f,
                 Width = 200,
                 GridColumn = 0,
-                GridRow = 12,
+                GridRow = 16,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -413,6 +552,41 @@ namespace Planet9.Scenes
             saveButtonPanel.Widgets.Add(_saveConfirmationLabel);
             
             _saveButtonDesktop.Root = saveButtonPanel;
+            
+            // Create preview screen UI
+            _previewDesktop = new Desktop();
+            _previewPanel = new Panel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Width = 600,
+                Height = 600
+            };
+            
+            _previewCoordinateLabel = new Label
+            {
+                Text = "Coordinates: (0, 0)",
+                TextColor = Color.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 10)
+            };
+            _previewPanel.Widgets.Add(_previewCoordinateLabel);
+            
+            var closeButton = new TextButton
+            {
+                Text = "Close (P)",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 10),
+                Width = 150,
+                Height = 40
+            };
+            closeButton.Click += (s, a) => _isPreviewActive = false;
+            _previewPanel.Widgets.Add(closeButton);
+            
+            _previewDesktop.Root = _previewPanel;
+            _previewDesktop.Root.Visible = false;
             
             // Load saved settings after UI is initialized
             LoadSettings();
@@ -542,7 +716,43 @@ namespace Planet9.Scenes
                         }
                     }
                     
-                    // Load inertia
+                    // Load camera inertia
+                    if (settings.TryGetProperty("CameraInertia", out var cameraInertiaElement))
+                    {
+                        var cameraInertia = cameraInertiaElement.GetSingle();
+                        System.Console.WriteLine($"Loading CameraInertia: {cameraInertia}");
+                        _cameraInertia = MathHelper.Clamp(cameraInertia, 0f, 0.995f);
+                        if (_cameraInertiaSlider != null)
+                        {
+                            _cameraInertiaSlider.Value = _cameraInertia;
+                        }
+                        if (_cameraInertiaLabel != null)
+                        {
+                            _cameraInertiaLabel.Text = $"Camera Inertia: {_cameraInertia:F2}";
+                        }
+                    }
+                    
+                    // Load aim rotation speed
+                    if (settings.TryGetProperty("AimRotationSpeed", out var aimRotationSpeedElement))
+                    {
+                        var aimRotationSpeed = aimRotationSpeedElement.GetSingle();
+                        System.Console.WriteLine($"Loading AimRotationSpeed: {aimRotationSpeed}");
+                        aimRotationSpeed = MathHelper.Clamp(aimRotationSpeed, 1f, 20f);
+                        if (_playerShip != null)
+                        {
+                            _playerShip.AimRotationSpeed = aimRotationSpeed;
+                        }
+                        if (_aimRotationSpeedSlider != null)
+                        {
+                            _aimRotationSpeedSlider.Value = aimRotationSpeed;
+                        }
+                        if (_aimRotationSpeedLabel != null)
+                        {
+                            _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {aimRotationSpeed:F1}";
+                        }
+                    }
+                    
+                    // Load ship inertia
                     if (settings.TryGetProperty("Inertia", out var inertiaElement))
                     {
                         var inertia = inertiaElement.GetSingle();
@@ -588,7 +798,9 @@ namespace Planet9.Scenes
                     Zoom = _cameraZoom,
                     GridSize = _gridSize,
                     PanSpeed = _cameraPanSpeed,
-                    Inertia = _playerShip?.Inertia ?? 0.9f
+                    CameraInertia = _cameraInertia,
+                    Inertia = _playerShip?.Inertia ?? 0.9f,
+                    AimRotationSpeed = _playerShip?.AimRotationSpeed ?? 5f
                 };
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
@@ -625,12 +837,86 @@ namespace Planet9.Scenes
         {
             var keyboardState = Keyboard.GetState();
             var mouseState = Mouse.GetState();
+            
+            // Toggle preview with P key
+            if (keyboardState.IsKeyDown(Keys.P) && !_previousKeyboardState.IsKeyDown(Keys.P))
+            {
+                _isPreviewActive = !_isPreviewActive;
+                if (_previewDesktop?.Root != null)
+                {
+                    _previewDesktop.Root.Visible = _isPreviewActive;
+                }
+            }
+            
+            // If preview is active, only update preview UI, don't update game
+            if (_isPreviewActive)
+            {
+                _previewDesktop?.UpdateInput();
+                
+                // Update coordinate label based on mouse position over sprite
+                if (_previewPanel != null && _previewCoordinateLabel != null && _playerShip?.GetTexture() != null)
+                {
+                    var shipTexture = _playerShip.GetTexture();
+                    
+                    // Calculate preview panel position (centered)
+                    int panelX = (GraphicsDevice.Viewport.Width - 600) / 2;
+                    int panelY = (GraphicsDevice.Viewport.Height - 600) / 2;
+                    
+                    // Sprite position in preview (centered in panel)
+                    int spriteX = panelX + 300 - (shipTexture?.Width ?? 0) / 2;
+                    int spriteY = panelY + 300 - (shipTexture?.Height ?? 0) / 2;
+                    
+                    // Check if mouse is over sprite
+                    if (shipTexture != null && mouseState.X >= spriteX && mouseState.X < spriteX + shipTexture.Width &&
+                        mouseState.Y >= spriteY && mouseState.Y < spriteY + shipTexture.Height)
+                    {
+                        // Calculate texture coordinates
+                        int texX = mouseState.X - spriteX;
+                        int texY = mouseState.Y - spriteY;
+                        _previewCoordinateLabel.Text = $"Coordinates: ({texX}, {texY})";
+                    }
+                    else
+                    {
+                        _previewCoordinateLabel.Text = "Coordinates: (--, --)";
+                    }
+                }
+                
+                _previousKeyboardState = keyboardState;
+                return; // Don't update game logic when preview is active
+            }
+            
+            // Restart music if it stops unexpectedly
+            if (_backgroundMusicInstance != null && _backgroundMusicInstance.State == SoundState.Stopped)
+            {
+                try
+                {
+                    _backgroundMusicInstance.Play();
+                    System.Console.WriteLine($"[MUSIC] Restarted galaxy music (was stopped)");
+                }
+                catch (System.Exception ex)
+                {
+                    System.Console.WriteLine($"[MUSIC ERROR] Failed to restart: {ex.Message}");
+                }
+            }
+            
             var deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
             
+            // Check if mouse cursor is within the game window bounds
+            bool isMouseInWindow = mouseState.X >= 0 && mouseState.X < GraphicsDevice.Viewport.Width &&
+                                  mouseState.Y >= 0 && mouseState.Y < GraphicsDevice.Viewport.Height;
+            
+            // Only process mouse input if cursor is within window
+            if (!isMouseInWindow)
+            {
+                _previousMouseState = mouseState;
+                _previousKeyboardState = keyboardState;
+                return;
+            }
+            
             // Check if mouse is over UI before processing player movement
-            // UI area is roughly 0-250 width, 0-480 height in top-left corner (extended for inertia controls)
+            // UI area is roughly 0-250 width, 0-600 height in top-left corner (extended for aim rotation speed controls)
             bool isMouseOverUI = mouseState.X >= 0 && mouseState.X <= 250 && 
-                                 mouseState.Y >= 0 && mouseState.Y <= 480;
+                                 mouseState.Y >= 0 && mouseState.Y <= 600;
             
             // Check if mouse is over save button area (lower right)
             // Save button is roughly 1280-150 width (1130-1280), 720-40 height (680-720)
@@ -720,11 +1006,41 @@ namespace Planet9.Scenes
             // Right mouse button to fire lasers
             if (mouseState.RightButton == ButtonState.Pressed && !_wasRightButtonPressed && !isMouseOverAnyUI)
             {
-                // Fire laser from player ship position in the direction the ship is facing
+                // Fire lasers from player ship positions in the direction the ship is facing
                 if (_playerShip != null)
                 {
-                    var laser = new Laser(_playerShip.Position, _playerShip.Rotation, GraphicsDevice);
-                    _lasers.Add(laser);
+                    var shipTexture = _playerShip.GetTexture();
+                    if (shipTexture == null) return;
+                    
+                    float textureCenterX = shipTexture.Width / 2f;
+                    float textureCenterY = shipTexture.Height / 2f;
+                    float shipRotation = _playerShip.Rotation;
+                    float cos = (float)Math.Cos(shipRotation);
+                    float sin = (float)Math.Sin(shipRotation);
+                    
+                    // Helper function to create laser from sprite coordinates
+                    Action<float, float> fireLaserFromSpriteCoords = (float spriteX, float spriteY) =>
+                    {
+                        // Convert sprite coordinates to offset from ship center
+                        float offsetX = spriteX - textureCenterX;
+                        float offsetY = spriteY - textureCenterY;
+                        
+                        // Rotate the offset by ship's rotation to get world-space offset
+                        float rotatedX = offsetX * cos - offsetY * sin;
+                        float rotatedY = offsetX * sin + offsetY * cos;
+                        
+                        // Calculate laser spawn position
+                        Vector2 laserSpawnPosition = _playerShip.Position + new Vector2(rotatedX, rotatedY);
+                        
+                        var laser = new Laser(laserSpawnPosition, shipRotation, GraphicsDevice);
+                        _lasers.Add(laser);
+                    };
+                    
+                    // Fire first laser from sprite coordinates (210, 50)
+                    fireLaserFromSpriteCoords(210f, 50f);
+                    
+                    // Fire second laser from sprite coordinates (40, 50)
+                    fireLaserFromSpriteCoords(40f, 50f);
                 }
             }
             _wasRightButtonPressed = mouseState.RightButton == ButtonState.Pressed;
@@ -733,6 +1049,10 @@ namespace Planet9.Scenes
             if (keyboardState.IsKeyDown(Keys.G) && !_previousKeyboardState.IsKeyDown(Keys.G))
             {
                 _gridVisible = !_gridVisible;
+                if (_gridVisibleCheckBox != null)
+                {
+                    _gridVisibleCheckBox.IsChecked = _gridVisible;
+                }
             }
             
             // Camera zoom with mouse wheel
@@ -747,6 +1067,21 @@ namespace Planet9.Scenes
                 {
                     _zoomLabel.Text = $"Zoom: {_cameraZoom:F2}x";
                 }
+            }
+            
+            // Update player ship aim target (mouse cursor position when not actively moving)
+            if (_playerShip != null && !_playerShip.IsActivelyMoving())
+            {
+                // Convert mouse position to world coordinates for aiming
+                var mouseScreenPos = new Vector2(mouseState.X, mouseState.Y);
+                var mouseWorldX = (mouseScreenPos.X - GraphicsDevice.Viewport.Width / 2f) / _cameraZoom + _cameraPosition.X;
+                var mouseWorldY = (mouseScreenPos.Y - GraphicsDevice.Viewport.Height / 2f) / _cameraZoom + _cameraPosition.Y;
+                var mouseWorldPos = new Vector2(mouseWorldX, mouseWorldY);
+                _playerShip.SetAimTarget(mouseWorldPos);
+            }
+            else if (_playerShip != null)
+            {
+                _playerShip.SetAimTarget(null); // Clear aim target when actively moving
             }
             
             // Update player ship first so we have current position
@@ -784,10 +1119,56 @@ namespace Planet9.Scenes
                 if (movement.Length() > 0)
                 {
                     movement.Normalize();
-                    _cameraPosition += movement * CameraSpeed * deltaTime;
+                    var targetVelocity = movement * CameraSpeed;
+                    // Apply inertia to velocity
+                    _cameraVelocity = Vector2.Lerp(_cameraVelocity, targetVelocity, (1f - _cameraInertia));
+                }
+                else
+                {
+                    // Apply deceleration when no input
+                    _cameraVelocity *= _cameraInertia;
                 }
             }
-            else if (_isPanningToPlayer && _playerShip != null)
+            else
+            {
+                // Apply deceleration when not using WASD
+                if (_cameraVelocity.Length() > 1f)
+                {
+                    _cameraVelocity *= _cameraInertia;
+                }
+                else
+                {
+                    _cameraVelocity = Vector2.Zero;
+                }
+            }
+            
+            // Apply velocity to camera position, then clamp to map bounds
+            _cameraPosition += _cameraVelocity * deltaTime;
+            
+            // Clamp camera position to map bounds (accounting for viewport size and zoom)
+            var viewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+            var viewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+            var minX = viewWidth / 2f;
+            var maxX = MapSize - viewWidth / 2f;
+            var minY = viewHeight / 2f;
+            var maxY = MapSize - viewHeight / 2f;
+            
+            _cameraPosition.X = MathHelper.Clamp(_cameraPosition.X, minX, maxX);
+            _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, minY, maxY);
+            
+            // Stop velocity if we hit a boundary
+            if ((_cameraPosition.X <= minX && _cameraVelocity.X < 0) || 
+                (_cameraPosition.X >= maxX && _cameraVelocity.X > 0))
+            {
+                _cameraVelocity.X = 0;
+            }
+            if ((_cameraPosition.Y <= minY && _cameraVelocity.Y < 0) || 
+                (_cameraPosition.Y >= maxY && _cameraVelocity.Y > 0))
+            {
+                _cameraVelocity.Y = 0;
+            }
+            
+            if (_isPanningToPlayer && _playerShip != null)
             {
                 // Smoothly pan camera back to player position
                 var targetPosition = _playerShip.Position;
@@ -811,6 +1192,26 @@ namespace Planet9.Scenes
                     {
                         _cameraPosition += direction * moveDistance;
                     }
+                    
+                    // Clamp to map bounds during panning
+                    var panViewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+                    var panViewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+                    var panMinX = panViewWidth / 2f;
+                    var panMaxX = MapSize - panViewWidth / 2f;
+                    var panMinY = panViewHeight / 2f;
+                    var panMaxY = MapSize - panViewHeight / 2f;
+                    
+                    _cameraPosition.X = MathHelper.Clamp(_cameraPosition.X, panMinX, panMaxX);
+                    _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, panMinY, panMaxY);
+                    
+                    // If we hit a boundary, stop panning
+                    if ((_cameraPosition.X <= panMinX || _cameraPosition.X >= panMaxX || 
+                         _cameraPosition.Y <= panMinY || _cameraPosition.Y >= panMaxY) && 
+                        _cameraPosition != targetPosition)
+                    {
+                        _isPanningToPlayer = false;
+                        _cameraFollowingPlayer = true;
+                    }
                 }
                 else
                 {
@@ -818,12 +1219,34 @@ namespace Planet9.Scenes
                     _cameraPosition = targetPosition;
                     _isPanningToPlayer = false;
                     _cameraFollowingPlayer = true; // Start following player after pan completes
+                    
+                    // Clamp final position to map bounds
+                    var finalViewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+                    var finalViewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+                    var finalMinX = finalViewWidth / 2f;
+                    var finalMaxX = MapSize - finalViewWidth / 2f;
+                    var finalMinY = finalViewHeight / 2f;
+                    var finalMaxY = MapSize - finalViewHeight / 2f;
+                    
+                    _cameraPosition.X = MathHelper.Clamp(_cameraPosition.X, finalMinX, finalMaxX);
+                    _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, finalMinY, finalMaxY);
                 }
             }
             else if (_cameraFollowingPlayer && _playerShip != null)
             {
-                // Keep camera on player after panning completes
+                // Keep camera on player after panning completes, but clamp to map bounds
                 _cameraPosition = _playerShip.Position;
+                
+                // Clamp to map bounds
+                var followViewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+                var followViewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+                var followMinX = followViewWidth / 2f;
+                var followMaxX = MapSize - followViewWidth / 2f;
+                var followMinY = followViewHeight / 2f;
+                var followMaxY = MapSize - followViewHeight / 2f;
+                
+                _cameraPosition.X = MathHelper.Clamp(_cameraPosition.X, followMinX, followMaxX);
+                _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, followMinY, followMaxY);
             }
             // If neither WASD nor spacebar and not following, camera stays where it is
             
@@ -1022,12 +1445,202 @@ namespace Planet9.Scenes
             spriteBatch.Begin();
             var uiBackground = new Texture2D(GraphicsDevice, 1, 1);
             uiBackground.SetData(new[] { new Color(0, 0, 0, 200) }); // Semi-transparent black
-            spriteBatch.Draw(uiBackground, new Rectangle(0, 0, 250, 480), Color.White); // Top-left UI background (extended for inertia)
+            spriteBatch.Draw(uiBackground, new Rectangle(0, 0, 250, 600), Color.White); // Top-left UI background (extended for aim rotation speed)
             spriteBatch.End();
+            
+            // Draw minimap in upper right corner
+            DrawMinimap(spriteBatch);
             
             // Draw UI overlay (zoom level) on top
             _desktop?.Render();
             _saveButtonDesktop?.Render();
+            
+            // Draw preview screen if active
+            if (_isPreviewActive && _playerShip?.GetTexture() != null && _previewDesktop != null)
+            {
+                var shipTexture = _playerShip.GetTexture();
+                
+                spriteBatch.Begin();
+                
+                // Draw semi-transparent background
+                var bgTexture = new Texture2D(GraphicsDevice, 1, 1);
+                bgTexture.SetData(new[] { new Color(0, 0, 0, 200) });
+                int panelX = (GraphicsDevice.Viewport.Width - 600) / 2;
+                int panelY = (GraphicsDevice.Viewport.Height - 600) / 2;
+                spriteBatch.Draw(bgTexture, new Rectangle(panelX, panelY, 600, 600), Color.White);
+                
+                // Draw ship sprite centered in preview panel
+                int spriteX = panelX + 300 - (shipTexture?.Width ?? 0) / 2;
+                int spriteY = panelY + 300 - (shipTexture?.Height ?? 0) / 2;
+                
+                spriteBatch.Draw(
+                    shipTexture,
+                    new Vector2(spriteX, spriteY),
+                    null,
+                    Color.White,
+                    0f,
+                    Vector2.Zero,
+                    1f,
+                    SpriteEffects.None,
+                    0f
+                );
+                
+                spriteBatch.End();
+                
+                // Render preview UI (labels, buttons)
+                _previewDesktop.Render();
+            }
+        }
+        
+        private void DrawMinimap(SpriteBatch spriteBatch)
+        {
+            if (_minimapBackgroundTexture == null || _minimapPlayerDotTexture == null || _minimapViewportOutlineTexture == null)
+                return;
+                
+            int minimapX = GraphicsDevice.Viewport.Width - MinimapSize - 10;
+            int minimapY = 10;
+            
+            // Calculate minimap scale (minimap size / map size)
+            float minimapScale = MinimapSize / MapSize;
+            
+            // Draw minimap background
+            spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend);
+            spriteBatch.Draw(_minimapBackgroundTexture, new Rectangle(minimapX, minimapY, MinimapSize, MinimapSize), Color.White);
+            
+            // Draw galaxy background in minimap (in screen space)
+            if (_galaxyTexture != null)
+            {
+                // Draw a single scaled galaxy texture to fill the minimap
+                // We'll use a source rectangle to show a portion of the galaxy centered on the player
+                var minimapRect = new Rectangle(minimapX, minimapY, MinimapSize, MinimapSize);
+                spriteBatch.Draw(
+                    _galaxyTexture,
+                    minimapRect,
+                    null,
+                    Color.White * 0.6f, // Slightly dimmed for minimap
+                    0f,
+                    Vector2.Zero,
+                    SpriteEffects.None,
+                    0f
+                );
+            }
+            
+            // Convert world positions to minimap screen positions
+            Vector2 WorldToMinimap(Vector2 worldPos)
+            {
+                return new Vector2(
+                    minimapX + worldPos.X * minimapScale,
+                    minimapY + worldPos.Y * minimapScale
+                );
+            }
+            
+            // Draw player ship position on minimap
+            if (_playerShip != null)
+            {
+                var playerScreenPos = WorldToMinimap(_playerShip.Position);
+                var playerDotSize = 4f; // 4 pixels on screen
+                
+                spriteBatch.Draw(
+                    _minimapPlayerDotTexture,
+                    playerScreenPos,
+                    null,
+                    Color.Cyan,
+                    0f,
+                    Vector2.Zero,
+                    playerDotSize,
+                    SpriteEffects.None,
+                    0f
+                );
+            }
+            
+            // Draw camera viewport rectangle on minimap
+            var viewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+            var viewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+            
+            var cameraTopLeft = WorldToMinimap(new Vector2(
+                _cameraPosition.X - viewWidth / 2f,
+                _cameraPosition.Y - viewHeight / 2f
+            ));
+            
+            var cameraBottomRight = WorldToMinimap(new Vector2(
+                _cameraPosition.X + viewWidth / 2f,
+                _cameraPosition.Y + viewHeight / 2f
+            ));
+            
+            var cameraRect = new Rectangle(
+                (int)cameraTopLeft.X,
+                (int)cameraTopLeft.Y,
+                (int)(cameraBottomRight.X - cameraTopLeft.X),
+                (int)(cameraBottomRight.Y - cameraTopLeft.Y)
+            );
+            
+            // Clamp camera rect to minimap bounds
+            cameraRect.X = Math.Max(minimapX, Math.Min(cameraRect.X, minimapX + MinimapSize));
+            cameraRect.Y = Math.Max(minimapY, Math.Min(cameraRect.Y, minimapY + MinimapSize));
+            cameraRect.Width = Math.Min(cameraRect.Width, minimapX + MinimapSize - cameraRect.X);
+            cameraRect.Height = Math.Min(cameraRect.Height, minimapY + MinimapSize - cameraRect.Y);
+            
+            // Draw camera viewport rectangle outline (2 pixels thick)
+            const float lineWidth = 2f;
+            Color cameraColor = new Color(255, 255, 255, 120); // White, less opaque
+            
+            // Top line
+            if (cameraRect.Width > 0 && cameraRect.Y >= minimapY)
+            {
+                spriteBatch.Draw(
+                    _minimapViewportOutlineTexture,
+                    new Rectangle(cameraRect.X, cameraRect.Y, cameraRect.Width, (int)lineWidth),
+                    cameraColor
+                );
+            }
+            
+            // Bottom line
+            if (cameraRect.Width > 0 && cameraRect.Y + cameraRect.Height <= minimapY + MinimapSize)
+            {
+                spriteBatch.Draw(
+                    _minimapViewportOutlineTexture,
+                    new Rectangle(cameraRect.X, cameraRect.Y + cameraRect.Height - (int)lineWidth, cameraRect.Width, (int)lineWidth),
+                    cameraColor
+                );
+            }
+            
+            // Left line
+            if (cameraRect.Height > 0 && cameraRect.X >= minimapX)
+            {
+                spriteBatch.Draw(
+                    _minimapViewportOutlineTexture,
+                    new Rectangle(cameraRect.X, cameraRect.Y, (int)lineWidth, cameraRect.Height),
+                    cameraColor
+                );
+            }
+            
+            // Right line
+            if (cameraRect.Height > 0 && cameraRect.X + cameraRect.Width <= minimapX + MinimapSize)
+            {
+                spriteBatch.Draw(
+                    _minimapViewportOutlineTexture,
+                    new Rectangle(cameraRect.X + cameraRect.Width - (int)lineWidth, cameraRect.Y, (int)lineWidth, cameraRect.Height),
+                    cameraColor
+                );
+            }
+            
+            spriteBatch.End();
+        }
+        
+        public override void UnloadContent()
+        {
+            // Stop music when leaving the scene
+            try
+            {
+                if (_backgroundMusicInstance != null)
+                {
+                    _backgroundMusicInstance.Stop();
+                    _backgroundMusicInstance.Dispose();
+                    _backgroundMusicInstance = null;
+                }
+            }
+            catch { }
+            base.UnloadContent();
         }
     }
 }

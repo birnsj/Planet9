@@ -26,7 +26,7 @@
   <!-- Copy content files to output directory -->
   <Target Name="CopyContent" AfterTargets="Build">
     <ItemGroup>
-      <ContentFiles Include="Content\*.xnb" />
+      <ContentFiles Include="Content\bin\DesktopGL\Content\*.xnb" />
     </ItemGroup>
     <Copy SourceFiles="@(ContentFiles)" 
           DestinationFolder="$(OutputPath)Content\" 

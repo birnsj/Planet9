@@ -23,3 +23,18 @@
 /processor:TextureProcessor
 /build:ship1-256.png
 
+#begin cursor1.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:cursor1.png
+
+#begin galaxy1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:galaxy1.ogg
+
+#begin mainmenu1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:mainmenu1.ogg
+

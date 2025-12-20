@@ -13,10 +13,13 @@ namespace Planet9.Entities
         private const int ShipSize = 128;
         private Vector2 _targetPosition;
         public float MoveSpeed { get; set; } = 300f; // pixels per second
-        public float RotationSpeed { get; set; } = 5f; // radians per second
+        public float RotationSpeed { get; set; } = 5f; // radians per second (for movement)
+        public float AimRotationSpeed { get; set; } = 5f; // radians per second (for aiming at cursor when stationary)
         public float Inertia { get; set; } = 0.9f; // Inertia/damping factor (0-1, higher = more inertia)
         private bool _isMoving = false;
         private Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
+        private Vector2? _aimTarget = null; // Target position to aim at when not moving
+        private EngineTrail? _engineTrail;
 
         public PlayerShip(GraphicsDevice graphicsDevice, ContentManager content)
         {
@@ -25,6 +28,7 @@ namespace Planet9.Entities
             Rotation = 0f; // Ship points up (north) by default
             _targetPosition = Position;
             LoadTexture();
+            _engineTrail = new EngineTrail(_graphicsDevice);
         }
         
         public void SetTargetPosition(Vector2 target)
@@ -40,9 +44,20 @@ namespace Planet9.Entities
             // Don't reset velocity - let inertia handle it
         }
         
+        public void SetAimTarget(Vector2? target)
+        {
+            _aimTarget = target;
+        }
+        
         public Texture2D? GetTexture()
         {
             return _texture;
+        }
+        
+        public bool IsActivelyMoving()
+        {
+            // Only return true if actively moving (has a target), not just coasting from inertia
+            return _isMoving;
         }
 
         private void LoadTexture()
@@ -108,6 +123,10 @@ namespace Planet9.Entities
         public override void Update(GameTime gameTime)
         {
             var deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
+            
+            // Update engine trail
+            float currentSpeed = _velocity.Length();
+            _engineTrail?.Update(deltaTime, Position, Rotation, currentSpeed);
             
             if (_isMoving)
             {
@@ -188,11 +207,47 @@ namespace Planet9.Entities
                 {
                     _velocity = Vector2.Zero;
                 }
+                
+                // When not moving, rotate toward aim target (mouse cursor/firing direction)
+                if (_aimTarget.HasValue)
+                {
+                    var aimDirection = _aimTarget.Value - Position;
+                    if (aimDirection.LengthSquared() > 0.1f) // Only rotate if target is not too close
+                    {
+                        // Calculate target rotation to face aim direction
+                        float targetRotation = (float)Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
+                        
+                        // Smoothly rotate towards target direction using aim rotation speed
+                        float rotationDelta = AimRotationSpeed * deltaTime;
+                        
+                        // Calculate shortest rotation path
+                        float angleDiff = targetRotation - Rotation;
+                        
+                        // Normalize angle difference to [-Pi, Pi]
+                        while (angleDiff > MathHelper.Pi)
+                            angleDiff -= MathHelper.TwoPi;
+                        while (angleDiff < -MathHelper.Pi)
+                            angleDiff += MathHelper.TwoPi;
+                        
+                        // Rotate towards target
+                        if (Math.Abs(angleDiff) < rotationDelta)
+                        {
+                            Rotation = targetRotation;
+                        }
+                        else
+                        {
+                            Rotation += Math.Sign(angleDiff) * rotationDelta;
+                        }
+                    }
+                }
             }
         }
 
         public override void Draw(SpriteBatch spriteBatch)
         {
+            // Draw engine trail first (behind the ship)
+            _engineTrail?.Draw(spriteBatch);
+            
             if (_texture != null && IsActive)
             {
                 var origin = new Vector2(_texture.Width / 2f, _texture.Height / 2f);

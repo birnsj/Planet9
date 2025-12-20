@@ -1,4 +1,5 @@
 Source File,Dest File,Processor Type,Content Type,Source File Size,Dest File Size,Build Seconds
+"D:/Projects/Planet9/Content/cursor1.png","D:/Projects/Planet9/Content/cursor1.xnb","TextureProcessor","Texture2DContent",3591,4181,0.0717599
 "D:/Projects/Planet9/Content/DefaultFont.spritefont","D:/Projects/Planet9/Content/DefaultFont.xnb","FontDescriptionProcessor","SpriteFontContent",2074,73754,0.1134496
 "D:/Projects/Planet9/Content/galaxy.png","D:/Projects/Planet9/Content/galaxy.xnb","TextureProcessor","Texture2DContent",6328472,16777301,0.2703763
 "D:/Projects/Planet9/Content/ship1-128.png","D:/Projects/Planet9/Content/ship1-128.xnb","TextureProcessor","Texture2DContent",29449,65621,0.0133928
