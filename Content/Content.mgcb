@@ -1,0 +1,25 @@
+#begin DefaultFont.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/build:DefaultFont.spritefont
+
+#begin galaxy.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:galaxy.png
+
+#begin ship1.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship1.png
+
+#begin ship1-128.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship1-128.png
+
+#begin ship1-256.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship1-256.png
+
