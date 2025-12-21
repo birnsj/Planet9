@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PipelineBuildEvent xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <SourceFile>D:/Projects/Planet9/Content/shipfire1.ogg</SourceFile>
+  <SourceTime>2025-12-20T19:37:57.0323312-05:00</SourceTime>
+  <DestFile>D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/shipfire1.xnb</DestFile>
+  <DestTime>2025-12-20T19:53:57.8991408-05:00</DestTime>
+  <Importer>OggImporter</Importer>
+  <ImporterTime>2025-10-20T10:25:32-04:00</ImporterTime>
+  <Processor>SoundEffectProcessor</Processor>
+  <ProcessorTime>2025-10-20T10:25:32-04:00</ProcessorTime>
+  <Dependencies />
+  <BuildAsset />
+  <BuildOutput />
+</PipelineBuildEvent>

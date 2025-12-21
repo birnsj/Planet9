@@ -28,7 +28,7 @@ namespace Planet9.Scenes
         
         // Camera position and zoom
         private Vector2 _cameraPosition;
-        private float _cameraZoom = 1.0f; // Start zoomed in
+        private float _cameraZoom = 0.40f; // Start zoomed out
         public float CameraSpeed { get; set; } = 200f; // pixels per second
         private const float MinZoom = 0.40f; // Furthest (most zoomed out)
         private const float MaxZoom = 1.10f; // Closest (most zoomed in)
