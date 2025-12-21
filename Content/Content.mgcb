@@ -38,3 +38,18 @@
 /processor:SoundEffectProcessor
 /build:mainmenu1.ogg
 
+#begin shipfire1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:shipfire1.ogg
+
+#begin shipidle1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:shipidle1.ogg
+
+#begin shipfly1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:shipfly1.ogg
+

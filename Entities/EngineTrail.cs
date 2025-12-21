@@ -10,8 +10,8 @@ namespace Planet9.Entities
         private List<Particle> _particles;
         private GraphicsDevice _graphicsDevice;
         private static Texture2D? _particleTexture;
-        private const float ParticleLifetime = 0.5f; // Seconds
-        private const float EmissionRate = 60f; // Particles per second
+        private const float ParticleLifetime = 0.8f; // Seconds (longer lifetime)
+        private const float EmissionRate = 120f; // Particles per second (more particles)
         private float _timeSinceLastEmission = 0f;
         private const float EmissionInterval = 1f / EmissionRate;
 
@@ -28,18 +28,29 @@ namespace Planet9.Entities
             }
         }
 
-        public void Emit(Vector2 position, float rotation, float speed)
+        public void Emit(Vector2 position, float rotation, float speed, float textureWidth, float textureHeight, float spriteX, float spriteY)
         {
-            // Calculate backward direction (opposite of ship's facing direction)
-            // Ship points in the direction of rotation, engine is at the back
+            // Engine particles emit from specified sprite coordinates
+            // Convert sprite coordinates to offset from ship center
+            float textureCenterX = textureWidth / 2f;
+            float textureCenterY = textureHeight / 2f;
+            float offsetX = spriteX - textureCenterX;
+            float offsetY = spriteY - textureCenterY;
+            
+            // Rotate the offset by ship's rotation to get world-space offset
+            float cos = (float)Math.Cos(rotation);
+            float sin = (float)Math.Sin(rotation);
+            float rotatedX = offsetX * cos - offsetY * sin;
+            float rotatedY = offsetX * sin + offsetY * cos;
+            
+            // Calculate emit position in world space
+            Vector2 emitPosition = position + new Vector2(rotatedX, rotatedY);
+            
+            // Calculate backward direction (opposite of ship's facing direction) for particle velocity
             var backwardDirection = new Vector2(
                 -(float)Math.Sin(rotation),
                 (float)Math.Cos(rotation)
             );
-
-            // Create particle at ship's rear (slightly offset from center)
-            float offsetDistance = 40f; // Distance from ship center to engine
-            Vector2 emitPosition = position + backwardDirection * offsetDistance;
 
             // Add some randomness to position and velocity
             var random = new Random();
@@ -59,13 +70,13 @@ namespace Planet9.Entities
                 ),
                 Velocity = particleDirection * speed * speedVariation,
                 Color = new Color(
-                    (byte)(200 + random.Next(55)), // Orange-red range
-                    (byte)(100 + random.Next(50)),
-                    (byte)(random.Next(30)),
+                    (byte)(220 + random.Next(35)), // Brighter orange-red range
+                    (byte)(120 + random.Next(50)),
+                    (byte)(random.Next(20)),
                     (byte)255
                 ),
                 Life = 1f,
-                Size = (float)(random.NextDouble() * 3f + 2f), // 2-5 pixels
+                Size = (float)(random.NextDouble() * 5f + 4f), // 4-9 pixels (larger)
                 LifeTime = ParticleLifetime + (float)(random.NextDouble() - 0.5) * 0.2f,
                 Age = 0f
             };
@@ -73,7 +84,7 @@ namespace Planet9.Entities
             _particles.Add(particle);
         }
 
-        public void Update(float deltaTime, Vector2 position, float rotation, float speed)
+        public void Update(float deltaTime, Vector2 position, float rotation, float speed, float textureWidth, float textureHeight)
         {
             // Emit particles based on speed (more particles when moving faster)
             if (speed > 10f) // Only emit when moving
@@ -86,7 +97,12 @@ namespace Planet9.Entities
                 
                 while (_timeSinceLastEmission >= adjustedInterval)
                 {
-                    Emit(position, rotation, speed);
+                    // Emit from first engine at (180, 180)
+                    Emit(position, rotation, speed, textureWidth, textureHeight, 180f, 180f);
+                    
+                    // Emit from second engine at (70, 180)
+                    Emit(position, rotation, speed, textureWidth, textureHeight, 70f, 180f);
+                    
                     _timeSinceLastEmission -= adjustedInterval;
                 }
             }

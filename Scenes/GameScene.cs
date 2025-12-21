@@ -78,12 +78,22 @@ namespace Planet9.Scenes
         private HorizontalSlider? _aimRotationSpeedSlider;
         private Label? _aimRotationSpeedLabel;
         private SoundEffectInstance? _backgroundMusicInstance;
+        private SoundEffect? _laserFireSound;
+        private SoundEffectInstance? _shipFlySound;
+        private SoundEffectInstance? _shipIdleSound;
+        private float _musicVolume = 0.5f; // Default music volume (0-1)
+        private float _sfxVolume = 1.0f; // Default SFX volume (0-1)
+        private HorizontalSlider? _musicVolumeSlider;
+        private Label? _musicVolumeLabel;
+        private HorizontalSlider? _sfxVolumeSlider;
+        private Label? _sfxVolumeLabel;
         
         // Ship preview screen
         private bool _isPreviewActive = false;
         private Desktop? _previewDesktop;
         private Panel? _previewPanel;
         private Label? _previewCoordinateLabel;
+        private bool _uiVisible = true; // Track UI visibility (toggled with U key)
 
         public GameScene(Game game) : base(game)
         {
@@ -112,7 +122,7 @@ namespace Planet9.Scenes
                 {
                     _backgroundMusicInstance = musicEffect.CreateInstance();
                     _backgroundMusicInstance.IsLooped = true; // Loop the music
-                    _backgroundMusicInstance.Volume = 0.5f; // 50% volume
+                    _backgroundMusicInstance.Volume = _musicVolume; // Use saved volume
                     _backgroundMusicInstance.Play();
                     System.Console.WriteLine($"[MUSIC] Galaxy music loaded and playing. State: {_backgroundMusicInstance.State}, Volume: {_backgroundMusicInstance.Volume}");
                 }
@@ -120,6 +130,46 @@ namespace Planet9.Scenes
             catch (System.Exception ex)
             {
                 System.Console.WriteLine($"[MUSIC ERROR] Failed to load background music: {ex.Message}");
+            }
+            
+            // Load laser fire sound effect
+            try
+            {
+                _laserFireSound = Content.Load<SoundEffect>("shipfire1");
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load laser fire sound: {ex.Message}");
+            }
+            
+            // Load ship idle and fly sound effects
+            try
+            {
+                var idleSound = Content.Load<SoundEffect>("shipidle1");
+                System.Console.WriteLine($"[SHIP SOUND] Idle sound loaded: {idleSound != null}");
+                if (idleSound != null)
+                {
+                    _shipIdleSound = idleSound.CreateInstance();
+                    _shipIdleSound.IsLooped = true;
+                    _shipIdleSound.Volume = _sfxVolume; // Use saved SFX volume
+                    _shipIdleSound.Play(); // Start playing idle sound immediately
+                    System.Console.WriteLine($"[SHIP SOUND] Idle sound playing. State: {_shipIdleSound.State}, Volume: {_shipIdleSound.Volume}");
+                }
+                
+                var flySound = Content.Load<SoundEffect>("shipfly1");
+                System.Console.WriteLine($"[SHIP SOUND] Fly sound loaded: {flySound != null}");
+                if (flySound != null)
+                {
+                    _shipFlySound = flySound.CreateInstance();
+                    _shipFlySound.IsLooped = true;
+                    _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume (80% of SFX volume)
+                    System.Console.WriteLine($"[SHIP SOUND] Fly sound instance created. Volume: {_shipFlySound.Volume}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"[SHIP SOUND ERROR] Failed to load ship sound effects: {ex.Message}");
+                System.Console.WriteLine($"[SHIP SOUND ERROR] Stack trace: {ex.StackTrace}");
             }
             
             // Calculate map center position first
@@ -176,8 +226,14 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Pan speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Aim rotation speed label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Aim rotation speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume slider
             
             // Zoom label - bright yellow for visibility
             _zoomLabel = new Label
@@ -520,13 +576,103 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_inertiaSlider);
             
-            _desktop.Root = grid;
+            // Music volume label
+            _musicVolumeLabel = new Label
+            {
+                Text = $"Music Volume: {(_musicVolume * 100f):F0}%",
+                TextColor = new Color(100, 200, 255), // Light blue
+                GridColumn = 0,
+                GridRow = 17,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            grid.Widgets.Add(_musicVolumeLabel);
             
-            // Update zoom label with initial zoom
-            _zoomLabel.Text = $"Zoom: {_cameraZoom:F2}x";
+            // Music volume slider (0-100%)
+            _musicVolumeSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 1f,
+                Value = _musicVolume,
+                Width = 200,
+                GridColumn = 0,
+                GridRow = 18,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _musicVolumeSlider.ValueChanged += (s, a) =>
+            {
+                _musicVolume = _musicVolumeSlider.Value;
+                _musicVolumeLabel.Text = $"Music Volume: {(_musicVolume * 100f):F0}%";
+                // Apply volume to background music
+                if (_backgroundMusicInstance != null)
+                {
+                    _backgroundMusicInstance.Volume = _musicVolume;
+                }
+            };
+            grid.Widgets.Add(_musicVolumeSlider);
             
-            // Create save button in lower right
+            // SFX volume label
+            _sfxVolumeLabel = new Label
+            {
+                Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%",
+                TextColor = new Color(255, 150, 100), // Orange
+                GridColumn = 0,
+                GridRow = 19,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            grid.Widgets.Add(_sfxVolumeLabel);
+            
+            // SFX volume slider (0-100%)
+            _sfxVolumeSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 1f,
+                Value = _sfxVolume,
+                Width = 200,
+                GridColumn = 0,
+                GridRow = 20,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _sfxVolumeSlider.ValueChanged += (s, a) =>
+            {
+                _sfxVolume = _sfxVolumeSlider.Value;
+                _sfxVolumeLabel.Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%";
+                // Apply volume to SFX instances
+                if (_shipFlySound != null)
+                {
+                    _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume
+                }
+            };
+            grid.Widgets.Add(_sfxVolumeSlider);
+            
+            // Wrap grid in a panel with background that covers all sliders
+            var uiPanel = new Panel
+            {
+                Background = new Myra.Graphics2D.Brushes.SolidBrush(new Microsoft.Xna.Framework.Color(20, 20, 20, 220)), // Semi-transparent dark background
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            uiPanel.Widgets.Add(grid);
+            
+            _desktop.Root = uiPanel;
+            
+            // Create save button in bottom right as separate desktop
             _saveButtonDesktop = new Desktop();
+            var saveButtonPanel = new Panel
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            
             _saveButton = new TextButton
             {
                 Text = "Save Settings",
@@ -537,7 +683,6 @@ namespace Planet9.Scenes
                 Height = 40
             };
             _saveButton.Click += (s, a) => SaveSettings();
-            var saveButtonPanel = new Panel();
             saveButtonPanel.Widgets.Add(_saveButton);
             
             // Save confirmation label (initially hidden)
@@ -545,13 +690,17 @@ namespace Planet9.Scenes
             {
                 Text = "Settings Saved!",
                 TextColor = Color.Lime,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 10, 60),
                 Visible = false
             };
             saveButtonPanel.Widgets.Add(_saveConfirmationLabel);
             
             _saveButtonDesktop.Root = saveButtonPanel;
+            
+            // Update zoom label with initial zoom
+            _zoomLabel.Text = $"Zoom: {_cameraZoom:F2}x";
             
             // Create preview screen UI
             _previewDesktop = new Desktop();
@@ -772,6 +921,52 @@ namespace Planet9.Scenes
                         }
                     }
                     
+                    // Load music volume
+                    if (settings.TryGetProperty("MusicVolume", out var musicVolumeElement))
+                    {
+                        var musicVolume = musicVolumeElement.GetSingle();
+                        System.Console.WriteLine($"Loading MusicVolume: {musicVolume}");
+                        _musicVolume = MathHelper.Clamp(musicVolume, 0f, 1f);
+                        if (_musicVolumeSlider != null)
+                        {
+                            _musicVolumeSlider.Value = _musicVolume;
+                        }
+                        if (_musicVolumeLabel != null)
+                        {
+                            _musicVolumeLabel.Text = $"Music Volume: {(_musicVolume * 100f):F0}%";
+                        }
+                        // Apply to background music instance
+                        if (_backgroundMusicInstance != null)
+                        {
+                            _backgroundMusicInstance.Volume = _musicVolume;
+                        }
+                    }
+                    
+                    // Load SFX volume
+                    if (settings.TryGetProperty("SFXVolume", out var sfxVolumeElement))
+                    {
+                        var sfxVolume = sfxVolumeElement.GetSingle();
+                        System.Console.WriteLine($"Loading SFXVolume: {sfxVolume}");
+                        _sfxVolume = MathHelper.Clamp(sfxVolume, 0f, 1f);
+                        if (_sfxVolumeSlider != null)
+                        {
+                            _sfxVolumeSlider.Value = _sfxVolume;
+                        }
+                        if (_sfxVolumeLabel != null)
+                        {
+                            _sfxVolumeLabel.Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%";
+                        }
+                        // Apply to SFX instances
+                        if (_shipIdleSound != null)
+                        {
+                            _shipIdleSound.Volume = _sfxVolume;
+                        }
+                        if (_shipFlySound != null)
+                        {
+                            _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume
+                        }
+                    }
+                    
                     System.Console.WriteLine("Settings loaded successfully!");
                 }
                 else
@@ -800,7 +995,9 @@ namespace Planet9.Scenes
                     PanSpeed = _cameraPanSpeed,
                     CameraInertia = _cameraInertia,
                     Inertia = _playerShip?.Inertia ?? 0.9f,
-                    AimRotationSpeed = _playerShip?.AimRotationSpeed ?? 5f
+                    AimRotationSpeed = _playerShip?.AimRotationSpeed ?? 5f,
+                    MusicVolume = _musicVolume,
+                    SFXVolume = _sfxVolume
                 };
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
@@ -845,6 +1042,20 @@ namespace Planet9.Scenes
                 if (_previewDesktop?.Root != null)
                 {
                     _previewDesktop.Root.Visible = _isPreviewActive;
+                }
+            }
+            
+            // Toggle UI with U key
+            if (keyboardState.IsKeyDown(Keys.U) && !_previousKeyboardState.IsKeyDown(Keys.U))
+            {
+                _uiVisible = !_uiVisible;
+                if (_desktop?.Root != null)
+                {
+                    _desktop.Root.Visible = _uiVisible;
+                }
+                if (_saveButtonDesktop?.Root != null)
+                {
+                    _saveButtonDesktop.Root.Visible = _uiVisible;
                 }
             }
             
@@ -899,6 +1110,45 @@ namespace Planet9.Scenes
                 }
             }
             
+            // Update ship sound effects based on forward motion state
+            if (_playerShip != null)
+            {
+                // Check if ship is actively moving forward (not just coasting from inertia)
+                bool isMovingForward = _playerShip.IsActivelyMoving();
+                
+                // Play fly sound when moving forward, idle sound when not moving forward
+                if (isMovingForward)
+                {
+                    // Stop idle sound if playing
+                    if (_shipIdleSound != null && _shipIdleSound.State == SoundState.Playing)
+                    {
+                        _shipIdleSound.Stop();
+                        System.Console.WriteLine($"[SHIP SOUND] Stopped idle sound");
+                    }
+                    // Ensure fly sound is playing (restart if it stopped)
+                    if (_shipFlySound != null && _shipFlySound.State != SoundState.Playing)
+                    {
+                        _shipFlySound.Play();
+                        System.Console.WriteLine($"[SHIP SOUND] Started/restarted fly sound. State: {_shipFlySound.State}, Volume: {_shipFlySound.Volume}");
+                    }
+                }
+                else
+                {
+                    // Stop fly sound when not moving forward
+                    if (_shipFlySound != null && _shipFlySound.State == SoundState.Playing)
+                    {
+                        _shipFlySound.Stop();
+                        System.Console.WriteLine($"[SHIP SOUND] Stopped fly sound");
+                    }
+                    // Ensure idle sound is playing (restart if it stopped)
+                    if (_shipIdleSound != null && _shipIdleSound.State != SoundState.Playing)
+                    {
+                        _shipIdleSound.Play();
+                        System.Console.WriteLine($"[SHIP SOUND] Started/restarted idle sound. State: {_shipIdleSound.State}, Volume: {_shipIdleSound.Volume}");
+                    }
+                }
+            }
+            
             var deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
             
             // Check if mouse cursor is within the game window bounds
@@ -914,19 +1164,25 @@ namespace Planet9.Scenes
             }
             
             // Check if mouse is over UI before processing player movement
-            // UI area is roughly 0-250 width, 0-600 height in top-left corner (extended for aim rotation speed controls)
-            bool isMouseOverUI = mouseState.X >= 0 && mouseState.X <= 250 && 
-                                 mouseState.Y >= 0 && mouseState.Y <= 600;
+            // Only check if UI is visible
+            bool isMouseOverUI = false;
+            bool isMouseOverAnyUI = false;
             
-            // Check if mouse is over save button area (lower right)
-            // Save button is roughly 1280-150 width (1130-1280), 720-40 height (680-720)
-            bool isMouseOverSaveButton = mouseState.X >= GraphicsDevice.Viewport.Width - 160 && 
-                                         mouseState.X <= GraphicsDevice.Viewport.Width &&
-                                         mouseState.Y >= GraphicsDevice.Viewport.Height - 50 && 
-                                         mouseState.Y <= GraphicsDevice.Viewport.Height;
-            
-            // Combine all UI areas (grid size is now in the top-left panel, so no separate check needed)
-            bool isMouseOverAnyUI = isMouseOverUI || isMouseOverSaveButton;
+            if (_uiVisible)
+            {
+                // UI area is roughly 0-250 width, 0-800 height in top-left corner (extended to cover all sliders and volume controls)
+                isMouseOverUI = mouseState.X >= 0 && mouseState.X <= 250 && 
+                                mouseState.Y >= 0 && mouseState.Y <= 800;
+                
+                // Check if mouse is over save button area (bottom right)
+                bool isMouseOverSaveButton = mouseState.X >= GraphicsDevice.Viewport.Width - 160 && 
+                                            mouseState.X <= GraphicsDevice.Viewport.Width &&
+                                            mouseState.Y >= GraphicsDevice.Viewport.Height - 50 && 
+                                            mouseState.Y <= GraphicsDevice.Viewport.Height;
+                
+                // Combine all UI areas
+                isMouseOverAnyUI = isMouseOverUI || isMouseOverSaveButton;
+            }
             
             // If mouse is over UI, stop any following movement immediately
             if (isMouseOverAnyUI && _isFollowingMouse)
@@ -1041,6 +1297,9 @@ namespace Planet9.Scenes
                     
                     // Fire second laser from sprite coordinates (40, 50)
                     fireLaserFromSpriteCoords(40f, 50f);
+                    
+                    // Play laser fire sound effect with SFX volume
+                    _laserFireSound?.Play(_sfxVolume, 0f, 0f);
                 }
             }
             _wasRightButtonPressed = mouseState.RightButton == ButtonState.Pressed;
@@ -1441,13 +1700,6 @@ namespace Planet9.Scenes
 
             spriteBatch.End();
             
-            // Draw semi-transparent background behind UI for better readability
-            spriteBatch.Begin();
-            var uiBackground = new Texture2D(GraphicsDevice, 1, 1);
-            uiBackground.SetData(new[] { new Color(0, 0, 0, 200) }); // Semi-transparent black
-            spriteBatch.Draw(uiBackground, new Rectangle(0, 0, 250, 600), Color.White); // Top-left UI background (extended for aim rotation speed)
-            spriteBatch.End();
-            
             // Draw minimap in upper right corner
             DrawMinimap(spriteBatch);
             
@@ -1472,6 +1724,41 @@ namespace Planet9.Scenes
                 // Draw ship sprite centered in preview panel
                 int spriteX = panelX + 300 - (shipTexture?.Width ?? 0) / 2;
                 int spriteY = panelY + 300 - (shipTexture?.Height ?? 0) / 2;
+                
+                // Draw box around sprite
+                if (_gridPixelTexture != null && shipTexture != null)
+                {
+                    int borderThickness = 2;
+                    Color borderColor = Color.White;
+                    
+                    // Top line
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        new Rectangle(spriteX - borderThickness, spriteY - borderThickness, shipTexture.Width + borderThickness * 2, borderThickness),
+                        borderColor
+                    );
+                    
+                    // Bottom line
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        new Rectangle(spriteX - borderThickness, spriteY + shipTexture.Height, shipTexture.Width + borderThickness * 2, borderThickness),
+                        borderColor
+                    );
+                    
+                    // Left line
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        new Rectangle(spriteX - borderThickness, spriteY - borderThickness, borderThickness, shipTexture.Height + borderThickness * 2),
+                        borderColor
+                    );
+                    
+                    // Right line
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        new Rectangle(spriteX + shipTexture.Width, spriteY - borderThickness, borderThickness, shipTexture.Height + borderThickness * 2),
+                        borderColor
+                    );
+                }
                 
                 spriteBatch.Draw(
                     shipTexture,
@@ -1582,7 +1869,7 @@ namespace Planet9.Scenes
             
             // Draw camera viewport rectangle outline (2 pixels thick)
             const float lineWidth = 2f;
-            Color cameraColor = new Color(255, 255, 255, 120); // White, less opaque
+            Color cameraColor = new Color(255, 255, 255, 128); // White, 50% alpha (128/255)
             
             // Top line
             if (cameraRect.Width > 0 && cameraRect.Y >= minimapY)
@@ -1629,7 +1916,7 @@ namespace Planet9.Scenes
         
         public override void UnloadContent()
         {
-            // Stop music when leaving the scene
+            // Stop and dispose sound effects
             try
             {
                 if (_backgroundMusicInstance != null)
@@ -1637,6 +1924,18 @@ namespace Planet9.Scenes
                     _backgroundMusicInstance.Stop();
                     _backgroundMusicInstance.Dispose();
                     _backgroundMusicInstance = null;
+                }
+                if (_shipIdleSound != null)
+                {
+                    _shipIdleSound.Stop();
+                    _shipIdleSound.Dispose();
+                    _shipIdleSound = null;
+                }
+                if (_shipFlySound != null)
+                {
+                    _shipFlySound.Stop();
+                    _shipFlySound.Dispose();
+                    _shipFlySound = null;
                 }
             }
             catch { }

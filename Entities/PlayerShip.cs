@@ -126,7 +126,10 @@ namespace Planet9.Entities
             
             // Update engine trail
             float currentSpeed = _velocity.Length();
-            _engineTrail?.Update(deltaTime, Position, Rotation, currentSpeed);
+            if (_texture != null && _engineTrail != null)
+            {
+                _engineTrail.Update(deltaTime, Position, Rotation, currentSpeed, _texture.Width, _texture.Height);
+            }
             
             if (_isMoving)
             {

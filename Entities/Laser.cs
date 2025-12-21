@@ -7,9 +7,9 @@ namespace Planet9.Entities
 {
     public class Laser : Entity
     {
-        private const float LaserSpeed = 800f; // pixels per second
-        private const float LaserLength = 40f;
-        private const float LaserWidth = 10f; // Increased from 4f for thicker lasers
+        private const float LaserSpeed = 1800f; // pixels per second (faster)
+        private const float LaserLength = 60f; // Longer lasers
+        private const float LaserWidth = 4f; // Thinner lasers
         private Color _laserColor = Color.Red;
         private Color _coreColor = Color.White;
         private static Texture2D? _pixelTexture;
