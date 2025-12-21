@@ -9,6 +9,8 @@
     <File>D:/Projects/Planet9/Content/ship1.png</File>
     <File>D:/Projects/Planet9/Content/ship1-128.png</File>
     <File>D:/Projects/Planet9/Content/ship1-256.png</File>
+    <File>D:/Projects/Planet9/Content/ship2-128.png</File>
+    <File>D:/Projects/Planet9/Content/ship2-256.png</File>
     <File>D:/Projects/Planet9/Content/cursor1.png</File>
     <File>D:/Projects/Planet9/Content/galaxy1.ogg</File>
     <File>D:/Projects/Planet9/Content/mainmenu1.ogg</File>
@@ -17,6 +19,8 @@
     <File>D:/Projects/Planet9/Content/shipfly1.ogg</File>
   </SourceFiles>
   <DestFiles>
+    <File xsi:nil="true" />
+    <File xsi:nil="true" />
     <File xsi:nil="true" />
     <File xsi:nil="true" />
     <File xsi:nil="true" />

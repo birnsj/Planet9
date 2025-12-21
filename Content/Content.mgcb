@@ -23,6 +23,16 @@
 /processor:TextureProcessor
 /build:ship1-256.png
 
+#begin ship2-128.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship2-128.png
+
+#begin ship2-256.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship2-256.png
+
 #begin cursor1.png
 /importer:TextureImporter
 /processor:TextureProcessor

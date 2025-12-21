@@ -1,12 +1,14 @@
 Source File,Dest File,Processor Type,Content Type,Source File Size,Dest File Size,Build Seconds
-"D:/Projects/Planet9/Content/cursor1.png","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/cursor1.xnb","TextureProcessor","Texture2DContent",3591,4181,0.0027665
-"D:/Projects/Planet9/Content/DefaultFont.spritefont","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/DefaultFont.xnb","FontDescriptionProcessor","SpriteFontContent",2074,73754,0.1418841
-"D:/Projects/Planet9/Content/galaxy.png","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/galaxy.xnb","TextureProcessor","Texture2DContent",6328472,16777301,0.305639
-"D:/Projects/Planet9/Content/galaxy1.ogg","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/galaxy1.xnb","SoundEffectProcessor","SoundEffectContent",2705821,25583721,0.3016388
-"D:/Projects/Planet9/Content/mainmenu1.ogg","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/mainmenu1.xnb","SoundEffectProcessor","SoundEffectContent",4229983,38129769,0.37841
-"D:/Projects/Planet9/Content/ship1-128.png","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/ship1-128.xnb","TextureProcessor","Texture2DContent",29449,65621,0.0028271
-"D:/Projects/Planet9/Content/ship1-256.png","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/ship1-256.xnb","TextureProcessor","Texture2DContent",89587,262229,0.0083436
-"D:/Projects/Planet9/Content/ship1.png","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/ship1.xnb","TextureProcessor","Texture2DContent",273029,1048661,0.0338885
-"D:/Projects/Planet9/Content/shipfire1.ogg","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/shipfire1.xnb","SoundEffectProcessor","SoundEffectContent",18114,163945,0.107856
-"D:/Projects/Planet9/Content/shipfly1.ogg","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/shipfly1.xnb","SoundEffectProcessor","SoundEffectContent",18696,178281,0.10903
-"D:/Projects/Planet9/Content/shipidle1.ogg","D:/Projects/Planet9/bin/Debug/net8.0/Content/Content/shipidle1.xnb","SoundEffectProcessor","SoundEffectContent",32858,338025,0.1161454
+"D:/Projects/Planet9/Content/cursor1.png","D:/Projects/Planet9/Content/cursor1.xnb","TextureProcessor","Texture2DContent",3591,4181,0.0018834
+"D:/Projects/Planet9/Content/DefaultFont.spritefont","D:/Projects/Planet9/Content/DefaultFont.xnb","FontDescriptionProcessor","SpriteFontContent",2074,73754,0.1332746
+"D:/Projects/Planet9/Content/galaxy.png","D:/Projects/Planet9/Content/galaxy.xnb","TextureProcessor","Texture2DContent",6328472,16777301,0.3261399
+"D:/Projects/Planet9/Content/galaxy1.ogg","D:/Projects/Planet9/Content/galaxy1.xnb","SoundEffectProcessor","SoundEffectContent",2705821,25583721,0.406678
+"D:/Projects/Planet9/Content/mainmenu1.ogg","D:/Projects/Planet9/Content/mainmenu1.xnb","SoundEffectProcessor","SoundEffectContent",4229983,38129769,0.4558425
+"D:/Projects/Planet9/Content/ship1-128.png","D:/Projects/Planet9/Content/ship1-128.xnb","TextureProcessor","Texture2DContent",29449,65621,0.0038385
+"D:/Projects/Planet9/Content/ship1-256.png","D:/Projects/Planet9/Content/ship1-256.xnb","TextureProcessor","Texture2DContent",89587,262229,0.0106595
+"D:/Projects/Planet9/Content/ship1.png","D:/Projects/Planet9/Content/ship1.xnb","TextureProcessor","Texture2DContent",273029,1048661,0.0277262
+"D:/Projects/Planet9/Content/ship2-128.png","D:/Projects/Planet9/Content/ship2-128.xnb","TextureProcessor","Texture2DContent",39168,65621,0.0151803
+"D:/Projects/Planet9/Content/ship2-256.png","D:/Projects/Planet9/Content/ship2-256.xnb","TextureProcessor","Texture2DContent",127092,262229,0.1037522
+"D:/Projects/Planet9/Content/shipfire1.ogg","D:/Projects/Planet9/Content/shipfire1.xnb","SoundEffectProcessor","SoundEffectContent",18114,163945,0.1254035
+"D:/Projects/Planet9/Content/shipfly1.ogg","D:/Projects/Planet9/Content/shipfly1.xnb","SoundEffectProcessor","SoundEffectContent",18696,178281,0.131671
+"D:/Projects/Planet9/Content/shipidle1.ogg","D:/Projects/Planet9/Content/shipidle1.xnb","SoundEffectProcessor","SoundEffectContent",32858,338025,0.1371352

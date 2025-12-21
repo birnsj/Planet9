@@ -7,9 +7,9 @@ namespace Planet9.Entities
 {
     public class PlayerShip : Entity
     {
-        private Texture2D? _texture;
-        private GraphicsDevice _graphicsDevice;
-        private ContentManager _content;
+        protected Texture2D? _texture;
+        protected GraphicsDevice _graphicsDevice;
+        protected ContentManager _content;
         private const int ShipSize = 128;
         private Vector2 _targetPosition;
         public float MoveSpeed { get; set; } = 300f; // pixels per second
@@ -60,7 +60,7 @@ namespace Planet9.Entities
             return _isMoving;
         }
 
-        private void LoadTexture()
+        protected virtual void LoadTexture()
         {
             try
             {
@@ -248,19 +248,29 @@ namespace Planet9.Entities
 
         public override void Draw(SpriteBatch spriteBatch)
         {
-            // Draw engine trail first (behind the ship)
-            _engineTrail?.Draw(spriteBatch);
+            Draw(spriteBatch, 1.0f);
+        }
+        
+        public void Draw(SpriteBatch spriteBatch, float alpha)
+        {
+            // Draw engine trail first (behind the ship) with alpha applied
+            if (_engineTrail != null && alpha > 0.01f)
+            {
+                // Draw engine trail with alpha (we'll need to modify EngineTrail to accept alpha)
+                // For now, just draw it normally - particles fade on their own
+                _engineTrail.Draw(spriteBatch);
+            }
             
-            if (_texture != null && IsActive)
+            if (_texture != null && IsActive && alpha > 0.01f)
             {
                 var origin = new Vector2(_texture.Width / 2f, _texture.Height / 2f);
                 
-                // Draw at native size (no scaling)
+                // Draw at native size (no scaling) with alpha
                 spriteBatch.Draw(
                     _texture,
                     Position,
                     null,
-                    Color.White,
+                    Color.White * alpha,
                     Rotation,
                     origin,
                     1f, // No scaling - use native texture size

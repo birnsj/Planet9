@@ -24,6 +24,7 @@ namespace Planet9.Scenes
         private const int MinimapSize = 200; // Minimap size in pixels (square)
         private Texture2D? _minimapBackgroundTexture;
         private Texture2D? _minimapPlayerDotTexture;
+        private Texture2D? _minimapFriendlyDotTexture;
         private Texture2D? _minimapViewportOutlineTexture;
         
         // Camera position and zoom
@@ -36,6 +37,15 @@ namespace Planet9.Scenes
         
         // Player ship
         private PlayerShip? _playerShip;
+        private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = ShipFriendly
+        private Label? _shipClassLabel;
+        private TextButton? _shipClassLeftButton;
+        private TextButton? _shipClassRightButton;
+        
+        // Friendly ships
+        private System.Collections.Generic.List<ShipFriendly> _friendlyShips = new System.Collections.Generic.List<ShipFriendly>();
+        private System.Collections.Generic.Dictionary<ShipFriendly, float> _friendlyShipAlpha = new System.Collections.Generic.Dictionary<ShipFriendly, float>();
+        private System.Random _random = new System.Random();
         
         // Lasers
         private System.Collections.Generic.List<Laser> _lasers = new System.Collections.Generic.List<Laser>();
@@ -69,7 +79,7 @@ namespace Planet9.Scenes
         private bool _isFollowingMouse = false;
         private Vector2 _clickStartPosition;
         private bool _isPanningToPlayer = false;
-        private bool _cameraFollowingPlayer = false; // Track if camera should follow player
+        private bool _cameraFollowingPlayer = true; // Track if camera should follow player (start as true)
         private float _cameraPanSpeed = 800f; // pixels per second for smooth panning (faster)
         private Vector2 _cameraVelocity = Vector2.Zero; // Camera velocity for inertia
         private float _cameraInertia = 0.85f; // Camera inertia factor (0 = no inertia, 1 = full inertia)
@@ -93,6 +103,12 @@ namespace Planet9.Scenes
         private Desktop? _previewDesktop;
         private Panel? _previewPanel;
         private Label? _previewCoordinateLabel;
+        private Label? _previewShipLabel;
+        private TextButton? _previewLeftButton;
+        private TextButton? _previewRightButton;
+        private int _previewShipIndex = 0; // 0 = ship1-256, 1 = ship2-256
+        private Texture2D? _previewShip1Texture;
+        private Texture2D? _previewShip2Texture;
         private bool _uiVisible = true; // Track UI visibility (toggled with U key)
 
         public GameScene(Game game) : base(game)
@@ -176,9 +192,28 @@ namespace Planet9.Scenes
             const float mapSize = 8192f;
             var mapCenter = new Vector2(mapSize / 2f, mapSize / 2f);
             
-            // Create player ship at map center
+            // Create player ship at map center (will be switched based on saved class)
             _playerShip = new PlayerShip(GraphicsDevice, Content);
             _playerShip.Position = mapCenter;
+            _currentShipClassIndex = 0; // Default to PlayerShip
+            
+            // Create 8 friendly ships at random positions
+            for (int i = 0; i < 8; i++)
+            {
+                var friendlyShip = new ShipFriendly(GraphicsDevice, Content);
+                // Random position within map bounds (with some margin from edges)
+                float margin = 500f;
+                float x = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
+                float y = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
+                friendlyShip.Position = new Vector2(x, y);
+                
+                // Random movement properties with wider speed range
+                friendlyShip.MoveSpeed = (float)(_random.NextDouble() * 400f + 100f); // 100-500 speed (wider range)
+                friendlyShip.RotationSpeed = (float)(_random.NextDouble() * 3f + 2f); // 2-5 rotation speed
+                friendlyShip.Inertia = (float)(_random.NextDouble() * 0.2f + 0.7f); // 0.7-0.9 inertia
+                
+                _friendlyShips.Add(friendlyShip);
+            }
             
             // Initialize camera to center on player
             _cameraPosition = mapCenter;
@@ -193,6 +228,9 @@ namespace Planet9.Scenes
             
             _minimapPlayerDotTexture = new Texture2D(GraphicsDevice, 1, 1);
             _minimapPlayerDotTexture.SetData(new[] { Color.Cyan });
+            
+            _minimapFriendlyDotTexture = new Texture2D(GraphicsDevice, 1, 1);
+            _minimapFriendlyDotTexture.SetData(new[] { Color.Lime }); // Green for friendly ships
             
             _minimapViewportOutlineTexture = new Texture2D(GraphicsDevice, 1, 1);
             _minimapViewportOutlineTexture.SetData(new[] { Color.White }); // White so color can be controlled via Draw parameter
@@ -234,6 +272,8 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship class label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship class buttons
             
             // Zoom label - bright yellow for visibility
             _zoomLabel = new Label
@@ -280,6 +320,8 @@ namespace Planet9.Scenes
                 {
                     _playerShip.MoveSpeed = _speedSlider.Value;
                     _speedLabel.Text = $"Speed: {_speedSlider.Value:F0}";
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
                 }
             };
             grid.Widgets.Add(_speedSlider);
@@ -316,6 +358,8 @@ namespace Planet9.Scenes
                 {
                     _playerShip.RotationSpeed = _turnRateSlider.Value;
                     _turnRateLabel.Text = $"Turn Rate: {_turnRateSlider.Value:F1}";
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
                 }
             };
             grid.Widgets.Add(_turnRateSlider);
@@ -536,6 +580,8 @@ namespace Planet9.Scenes
                 {
                     _playerShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
                     _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
                 }
             };
             grid.Widgets.Add(_aimRotationSpeedSlider);
@@ -572,6 +618,8 @@ namespace Planet9.Scenes
                 {
                     _playerShip.Inertia = _inertiaSlider.Value;
                     _inertiaLabel.Text = $"Inertia: {_inertiaSlider.Value:F2}";
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
                 }
             };
             grid.Widgets.Add(_inertiaSlider);
@@ -652,6 +700,52 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_sfxVolumeSlider);
             
+            // Ship class label
+            _shipClassLabel = new Label
+            {
+                Text = "Ship Class: PlayerShip",
+                TextColor = new Color(255, 200, 100), // Orange
+                GridColumn = 0,
+                GridRow = 21,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            grid.Widgets.Add(_shipClassLabel);
+            
+            // Ship class buttons container
+            var shipClassButtonContainer = new HorizontalStackPanel
+            {
+                GridColumn = 0,
+                GridRow = 22,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 5,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            
+            // Left arrow button (switch to PlayerShip)
+            _shipClassLeftButton = new TextButton
+            {
+                Text = "← PlayerShip",
+                Width = 120,
+                Height = 30
+            };
+            _shipClassLeftButton.Click += (s, a) => SwitchShipClass(0);
+            shipClassButtonContainer.Widgets.Add(_shipClassLeftButton);
+            
+            // Right arrow button (switch to ShipFriendly)
+            _shipClassRightButton = new TextButton
+            {
+                Text = "ShipFriendly →",
+                Width = 120,
+                Height = 30
+            };
+            _shipClassRightButton.Click += (s, a) => SwitchShipClass(1);
+            shipClassButtonContainer.Widgets.Add(_shipClassRightButton);
+            
+            grid.Widgets.Add(shipClassButtonContainer);
+            
             // Wrap grid in a panel with background that covers all sliders
             var uiPanel = new Panel
             {
@@ -704,12 +798,13 @@ namespace Planet9.Scenes
             
             // Create preview screen UI
             _previewDesktop = new Desktop();
+            
             _previewPanel = new Panel
             {
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                Width = 600,
-                Height = 600
+                Width = 700,
+                Height = 700
             };
             
             _previewCoordinateLabel = new Label
@@ -721,6 +816,64 @@ namespace Planet9.Scenes
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 10)
             };
             _previewPanel.Widgets.Add(_previewCoordinateLabel);
+            
+            // Ship name label
+            _previewShipLabel = new Label
+            {
+                Text = "PlayerShip (1/2)",
+                TextColor = Color.Yellow,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 40, 10, 10)
+            };
+            _previewPanel.Widgets.Add(_previewShipLabel);
+            
+            // Arrow buttons container - positioned inside the preview panel at the bottom
+            var arrowContainer = new HorizontalStackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Spacing = 20,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 60) // Extra bottom padding to position above close button
+            };
+            
+            // Left arrow button
+            _previewLeftButton = new TextButton
+            {
+                Text = "←",
+                Width = 60,
+                Height = 60
+            };
+            _previewLeftButton.Click += (s, a) => 
+            {
+                _previewShipIndex--;
+                if (_previewShipIndex < 0)
+                    _previewShipIndex = 1; // Wrap to last (ship2)
+                UpdatePreviewShipLabel();
+                // Switch player ship class to match preview
+                SwitchShipClass(_previewShipIndex);
+            };
+            arrowContainer.Widgets.Add(_previewLeftButton);
+            
+            // Right arrow button
+            _previewRightButton = new TextButton
+            {
+                Text = "→",
+                Width = 60,
+                Height = 60
+            };
+            _previewRightButton.Click += (s, a) => 
+            {
+                _previewShipIndex++;
+                if (_previewShipIndex > 1)
+                    _previewShipIndex = 0; // Wrap to ship1
+                UpdatePreviewShipLabel();
+                // Switch player ship class to match preview
+                SwitchShipClass(_previewShipIndex);
+            };
+            arrowContainer.Widgets.Add(_previewRightButton);
+            
+            _previewPanel.Widgets.Add(arrowContainer);
             
             var closeButton = new TextButton
             {
@@ -737,8 +890,28 @@ namespace Planet9.Scenes
             _previewDesktop.Root = _previewPanel;
             _previewDesktop.Root.Visible = false;
             
+            // Load ship textures for preview
+            try
+            {
+                _previewShip1Texture = Content.Load<Texture2D>("ship1-256");
+                _previewShip2Texture = Content.Load<Texture2D>("ship2-256");
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load preview ship textures: {ex.Message}");
+            }
+            
             // Load saved settings after UI is initialized
             LoadSettings();
+            
+            // Load current ship class settings
+            LoadCurrentShipSettings();
+            
+            // Update ship class label
+            if (_shipClassLabel != null)
+            {
+                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly")}";
+            }
             
             _previousMouseState = Mouse.GetState();
             _previousKeyboardState = Keyboard.GetState();
@@ -757,43 +930,17 @@ namespace Planet9.Scenes
                     System.Console.WriteLine($"Settings file found. Content: {json}");
                     var settings = JsonSerializer.Deserialize<JsonElement>(json);
                     
-                    // Load ship speed
-                    if (settings.TryGetProperty("ShipSpeed", out var shipSpeedElement))
+                    // Load current ship class
+                    if (settings.TryGetProperty("CurrentShipClass", out var shipClassElement))
                     {
-                        var shipSpeed = shipSpeedElement.GetSingle();
-                        System.Console.WriteLine($"Loading ShipSpeed: {shipSpeed}");
-                        if (_playerShip != null)
+                        var shipClassIndex = shipClassElement.GetInt32();
+                        if (shipClassIndex != _currentShipClassIndex)
                         {
-                            _playerShip.MoveSpeed = shipSpeed;
-                        }
-                        if (_speedSlider != null)
-                        {
-                            _speedSlider.Value = shipSpeed;
-                        }
-                        if (_speedLabel != null)
-                        {
-                            _speedLabel.Text = $"Speed: {shipSpeed:F0}";
+                            SwitchShipClass(shipClassIndex);
                         }
                     }
                     
-                    // Load turn rate
-                    if (settings.TryGetProperty("TurnRate", out var turnRateElement))
-                    {
-                        var turnRate = turnRateElement.GetSingle();
-                        System.Console.WriteLine($"Loading TurnRate: {turnRate}");
-                        if (_playerShip != null)
-                        {
-                            _playerShip.RotationSpeed = turnRate;
-                        }
-                        if (_turnRateSlider != null)
-                        {
-                            _turnRateSlider.Value = turnRate;
-                        }
-                        if (_turnRateLabel != null)
-                        {
-                            _turnRateLabel.Text = $"Turn Rate: {turnRate:F1}";
-                        }
-                    }
+                    // Ship-specific settings are loaded by LoadCurrentShipSettings()
                     
                     // Load camera speed
                     if (settings.TryGetProperty("CameraSpeed", out var cameraSpeedElement))
@@ -881,45 +1028,6 @@ namespace Planet9.Scenes
                         }
                     }
                     
-                    // Load aim rotation speed
-                    if (settings.TryGetProperty("AimRotationSpeed", out var aimRotationSpeedElement))
-                    {
-                        var aimRotationSpeed = aimRotationSpeedElement.GetSingle();
-                        System.Console.WriteLine($"Loading AimRotationSpeed: {aimRotationSpeed}");
-                        aimRotationSpeed = MathHelper.Clamp(aimRotationSpeed, 1f, 20f);
-                        if (_playerShip != null)
-                        {
-                            _playerShip.AimRotationSpeed = aimRotationSpeed;
-                        }
-                        if (_aimRotationSpeedSlider != null)
-                        {
-                            _aimRotationSpeedSlider.Value = aimRotationSpeed;
-                        }
-                        if (_aimRotationSpeedLabel != null)
-                        {
-                            _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {aimRotationSpeed:F1}";
-                        }
-                    }
-                    
-                    // Load ship inertia
-                    if (settings.TryGetProperty("Inertia", out var inertiaElement))
-                    {
-                        var inertia = inertiaElement.GetSingle();
-                        System.Console.WriteLine($"Loading Inertia: {inertia}");
-                        inertia = MathHelper.Clamp(inertia, 0f, 0.995f);
-                        if (_playerShip != null)
-                        {
-                            _playerShip.Inertia = inertia;
-                        }
-                        if (_inertiaSlider != null)
-                        {
-                            _inertiaSlider.Value = inertia;
-                        }
-                        if (_inertiaLabel != null)
-                        {
-                            _inertiaLabel.Text = $"Inertia: {inertia:F2}";
-                        }
-                    }
                     
                     // Load music volume
                     if (settings.TryGetProperty("MusicVolume", out var musicVolumeElement))
@@ -985,17 +1093,18 @@ namespace Planet9.Scenes
         {
             try
             {
+                // Save current ship class settings
+                SaveCurrentShipSettings();
+                
+                // Save general settings (camera, UI, etc.)
                 var settings = new
                 {
-                    ShipSpeed = _playerShip?.MoveSpeed ?? 300f,
-                    TurnRate = _playerShip?.RotationSpeed ?? 5f,
+                    CurrentShipClass = _currentShipClassIndex,
                     CameraSpeed = CameraSpeed,
                     Zoom = _cameraZoom,
                     GridSize = _gridSize,
                     PanSpeed = _cameraPanSpeed,
                     CameraInertia = _cameraInertia,
-                    Inertia = _playerShip?.Inertia ?? 0.9f,
-                    AimRotationSpeed = _playerShip?.AimRotationSpeed ?? 5f,
                     MusicVolume = _musicVolume,
                     SFXVolume = _sfxVolume
                 };
@@ -1043,6 +1152,35 @@ namespace Planet9.Scenes
                 {
                     _previewDesktop.Root.Visible = _isPreviewActive;
                 }
+                if (_isPreviewActive)
+                {
+                    // Sync preview index with current ship class when opening
+                    _previewShipIndex = _currentShipClassIndex;
+                    UpdatePreviewShipLabel();
+                }
+            }
+            
+            // Arrow keys to switch ships in preview
+            if (_isPreviewActive)
+            {
+                if (keyboardState.IsKeyDown(Keys.Left) && !_previousKeyboardState.IsKeyDown(Keys.Left))
+                {
+                    _previewShipIndex--;
+                    if (_previewShipIndex < 0)
+                        _previewShipIndex = 1; // Wrap to ship2
+                    UpdatePreviewShipLabel();
+                    // Switch player ship class to match preview
+                    SwitchShipClass(_previewShipIndex);
+                }
+                if (keyboardState.IsKeyDown(Keys.Right) && !_previousKeyboardState.IsKeyDown(Keys.Right))
+                {
+                    _previewShipIndex++;
+                    if (_previewShipIndex > 1)
+                        _previewShipIndex = 0; // Wrap to ship1
+                    UpdatePreviewShipLabel();
+                    // Switch player ship class to match preview
+                    SwitchShipClass(_previewShipIndex);
+                }
             }
             
             // Toggle UI with U key
@@ -1064,18 +1202,19 @@ namespace Planet9.Scenes
             {
                 _previewDesktop?.UpdateInput();
                 
-                // Update coordinate label based on mouse position over sprite
-                if (_previewPanel != null && _previewCoordinateLabel != null && _playerShip?.GetTexture() != null)
+                // Get the currently previewed ship texture
+                Texture2D? shipTexture = _previewShipIndex == 0 ? _previewShip1Texture : _previewShip2Texture;
+                    
+                if (_previewPanel != null && _previewCoordinateLabel != null && shipTexture != null)
                 {
-                    var shipTexture = _playerShip.GetTexture();
                     
                     // Calculate preview panel position (centered)
-                    int panelX = (GraphicsDevice.Viewport.Width - 600) / 2;
-                    int panelY = (GraphicsDevice.Viewport.Height - 600) / 2;
+                    int panelX = (GraphicsDevice.Viewport.Width - 700) / 2;
+                    int panelY = (GraphicsDevice.Viewport.Height - 700) / 2;
                     
                     // Sprite position in preview (centered in panel)
-                    int spriteX = panelX + 300 - (shipTexture?.Width ?? 0) / 2;
-                    int spriteY = panelY + 300 - (shipTexture?.Height ?? 0) / 2;
+                    int spriteX = panelX + 350 - (shipTexture?.Width ?? 0) / 2;
+                    int spriteY = panelY + 350 - (shipTexture?.Height ?? 0) / 2;
                     
                     // Check if mouse is over sprite
                     if (shipTexture != null && mouseState.X >= spriteX && mouseState.X < spriteX + shipTexture.Width &&
@@ -1398,6 +1537,11 @@ namespace Planet9.Scenes
                 else
                 {
                     _cameraVelocity = Vector2.Zero;
+                    // Reattach camera to player when WASD is released and velocity stops
+                    if (!_cameraFollowingPlayer && _playerShip != null)
+                    {
+                        _cameraFollowingPlayer = true;
+                    }
                 }
             }
             
@@ -1508,6 +1652,185 @@ namespace Planet9.Scenes
                 _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, followMinY, followMaxY);
             }
             // If neither WASD nor spacebar and not following, camera stays where it is
+            
+            // Update friendly ships with collision avoidance
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                // Collision avoidance: steer away from nearby ships
+                const float avoidanceRadius = 300f; // Distance to start avoiding
+                const float avoidanceForce = 200f; // How strongly to avoid (pixels per second)
+                Vector2 avoidanceVector = Vector2.Zero;
+                
+                foreach (var otherShip in _friendlyShips)
+                {
+                    if (otherShip == friendlyShip) continue;
+                    
+                    Vector2 direction = friendlyShip.Position - otherShip.Position;
+                    float distance = direction.Length();
+                    
+                    if (distance < avoidanceRadius && distance > 0.1f)
+                    {
+                        // Calculate avoidance force (stronger when closer)
+                        float avoidanceStrength = (avoidanceRadius - distance) / avoidanceRadius;
+                        direction.Normalize();
+                        avoidanceVector += direction * avoidanceStrength * avoidanceForce;
+                    }
+                }
+                
+                // Apply avoidance by pushing position away from nearby ships
+                if (avoidanceVector.LengthSquared() > 0.1f)
+                {
+                    // Push the ship away from nearby ships
+                    friendlyShip.Position += avoidanceVector * deltaTime;
+                    
+                    // If ship is moving, redirect it away from the collision
+                    if (friendlyShip.IsActivelyMoving())
+                    {
+                        // Set a new target in the avoidance direction to steer away
+                        Vector2 avoidanceTarget = friendlyShip.Position + avoidanceVector * 150f;
+                        // Don't clamp - allow ships to go outside map bounds
+                        friendlyShip.SetTargetPosition(avoidanceTarget);
+                    }
+                }
+                
+                friendlyShip.Update(gameTime);
+                
+                // Check if ship is near or outside map edges and fade out
+                const float fadeStartDistance = 200f; // Start fading when within 200 pixels of edge
+                const float fadeSpeed = 2.0f; // Fade speed per second
+                float distanceToEdge = Math.Min(
+                    Math.Min(friendlyShip.Position.X, MapSize - friendlyShip.Position.X),
+                    Math.Min(friendlyShip.Position.Y, MapSize - friendlyShip.Position.Y)
+                );
+                
+                if (distanceToEdge < fadeStartDistance)
+                {
+                    // Fade out as ship approaches edge
+                    float fadeAmount = (fadeStartDistance - distanceToEdge) / fadeStartDistance;
+                    if (_friendlyShipAlpha.ContainsKey(friendlyShip))
+                    {
+                        _friendlyShipAlpha[friendlyShip] = Math.Max(0f, 1.0f - fadeAmount);
+                    }
+                    else
+                    {
+                        _friendlyShipAlpha[friendlyShip] = Math.Max(0f, 1.0f - fadeAmount);
+                    }
+                }
+                else if (friendlyShip.Position.X < -500 || friendlyShip.Position.X > MapSize + 500 ||
+                         friendlyShip.Position.Y < -500 || friendlyShip.Position.Y > MapSize + 500)
+                {
+                    // Ship is far outside map - fully faded, respawn on opposite side
+                    if (_friendlyShipAlpha.ContainsKey(friendlyShip) && _friendlyShipAlpha[friendlyShip] <= 0.1f)
+                    {
+                        // Respawn on opposite side of map
+                        float newX, newY;
+                        if (friendlyShip.Position.X < 0)
+                        {
+                            newX = MapSize + 200f; // Spawn on right edge
+                        }
+                        else if (friendlyShip.Position.X > MapSize)
+                        {
+                            newX = -200f; // Spawn on left edge
+                        }
+                        else
+                        {
+                            newX = friendlyShip.Position.X;
+                        }
+                        
+                        if (friendlyShip.Position.Y < 0)
+                        {
+                            newY = MapSize + 200f; // Spawn on bottom edge
+                        }
+                        else if (friendlyShip.Position.Y > MapSize)
+                        {
+                            newY = -200f; // Spawn on top edge
+                        }
+                        else
+                        {
+                            newY = friendlyShip.Position.Y;
+                        }
+                        
+                        friendlyShip.Position = new Vector2(newX, newY);
+                        _friendlyShipAlpha[friendlyShip] = 1.0f; // Reset to fully visible
+                        
+                        // Set a target across the map
+                        float targetX = MapSize - newX;
+                        float targetY = MapSize - newY;
+                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
+                    }
+                }
+                else
+                {
+                    // Ship is inside map bounds - ensure fully visible
+                    if (_friendlyShipAlpha.ContainsKey(friendlyShip))
+                    {
+                        _friendlyShipAlpha[friendlyShip] = Math.Min(1.0f, _friendlyShipAlpha[friendlyShip] + fadeSpeed * deltaTime);
+                    }
+                    else
+                    {
+                        _friendlyShipAlpha[friendlyShip] = 1.0f;
+                    }
+                }
+                
+                // Randomly decide to move or idle, or fly across map
+                // If not currently moving, periodically pick a new random target
+                if (!friendlyShip.IsActivelyMoving() && _random.NextDouble() < 0.002f)
+                {
+                    // 30% chance to fly across the whole map (edge to edge)
+                    if (_random.NextDouble() < 0.3f)
+                    {
+                        // Pick a random edge to start from and opposite edge to fly to
+                        int startEdge = _random.Next(4); // 0=top, 1=right, 2=bottom, 3=left
+                        float startX, startY, targetX, targetY;
+                        
+                        switch (startEdge)
+                        {
+                            case 0: // Top edge
+                                startX = (float)(_random.NextDouble() * MapSize);
+                                startY = -200f;
+                                targetX = startX;
+                                targetY = MapSize + 200f; // Bottom edge
+                                break;
+                            case 1: // Right edge
+                                startX = MapSize + 200f;
+                                startY = (float)(_random.NextDouble() * MapSize);
+                                targetX = -200f; // Left edge
+                                targetY = startY;
+                                break;
+                            case 2: // Bottom edge
+                                startX = (float)(_random.NextDouble() * MapSize);
+                                startY = MapSize + 200f;
+                                targetX = startX;
+                                targetY = -200f; // Top edge
+                                break;
+                            default: // Left edge
+                                startX = -200f;
+                                startY = (float)(_random.NextDouble() * MapSize);
+                                targetX = MapSize + 200f; // Right edge
+                                targetY = startY;
+                                break;
+                        }
+                        
+                        friendlyShip.Position = new Vector2(startX, startY);
+                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
+                        _friendlyShipAlpha[friendlyShip] = 1.0f; // Start fully visible
+                    }
+                    else
+                    {
+                        // Normal random movement within map
+                        float margin = 500f;
+                        float targetX = (float)(_random.NextDouble() * (MapSize - margin * 2) + margin);
+                        float targetY = (float)(_random.NextDouble() * (MapSize - margin * 2) + margin);
+                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
+                    }
+                    
+                    // Randomly change speed when picking a new target (50% chance)
+                    if (_random.NextDouble() < 0.5f)
+                    {
+                        friendlyShip.MoveSpeed = (float)(_random.NextDouble() * 400f + 100f); // 100-500 speed
+                    }
+                }
+            }
             
             // Update lasers
             foreach (var laser in _lasers)
@@ -1679,6 +2002,17 @@ namespace Planet9.Scenes
             
             // Draw player ship
             _playerShip?.Draw(spriteBatch);
+            
+            // Draw friendly ships with fade effect
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                float alpha = _friendlyShipAlpha.ContainsKey(friendlyShip) ? _friendlyShipAlpha[friendlyShip] : 1.0f;
+                if (alpha > 0.01f) // Only draw if not fully faded
+                {
+                    // Draw ship with alpha (includes engine trail)
+                    friendlyShip.Draw(spriteBatch, alpha);
+                }
+            }
 
             spriteBatch.End();
             
@@ -1708,22 +2042,23 @@ namespace Planet9.Scenes
             _saveButtonDesktop?.Render();
             
             // Draw preview screen if active
-            if (_isPreviewActive && _playerShip?.GetTexture() != null && _previewDesktop != null)
+            Texture2D? shipTexture = _previewShipIndex == 0 ? _previewShip1Texture : _previewShip2Texture;
+                
+            if (_isPreviewActive && shipTexture != null && _previewDesktop != null)
             {
-                var shipTexture = _playerShip.GetTexture();
                 
                 spriteBatch.Begin();
                 
                 // Draw semi-transparent background
                 var bgTexture = new Texture2D(GraphicsDevice, 1, 1);
                 bgTexture.SetData(new[] { new Color(0, 0, 0, 200) });
-                int panelX = (GraphicsDevice.Viewport.Width - 600) / 2;
-                int panelY = (GraphicsDevice.Viewport.Height - 600) / 2;
-                spriteBatch.Draw(bgTexture, new Rectangle(panelX, panelY, 600, 600), Color.White);
+                int panelX = (GraphicsDevice.Viewport.Width - 700) / 2;
+                int panelY = (GraphicsDevice.Viewport.Height - 700) / 2;
+                spriteBatch.Draw(bgTexture, new Rectangle(panelX, panelY, 700, 700), Color.White);
                 
                 // Draw ship sprite centered in preview panel
-                int spriteX = panelX + 300 - (shipTexture?.Width ?? 0) / 2;
-                int spriteY = panelY + 300 - (shipTexture?.Height ?? 0) / 2;
+                int spriteX = panelX + 350 - (shipTexture?.Width ?? 0) / 2;
+                int spriteY = panelY + 350 - (shipTexture?.Height ?? 0) / 2;
                 
                 // Draw box around sprite
                 if (_gridPixelTexture != null && shipTexture != null)
@@ -1779,9 +2114,146 @@ namespace Planet9.Scenes
             }
         }
         
+        private void UpdatePreviewShipLabel()
+        {
+            if (_previewShipLabel == null) return;
+            
+            string className = _previewShipIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            _previewShipLabel.Text = $"{className} ({_previewShipIndex + 1}/2)";
+        }
+        
+        private void SwitchShipClass(int classIndex)
+        {
+            if (classIndex == _currentShipClassIndex) return;
+            
+            // Save current ship settings before switching
+            SaveCurrentShipSettings();
+            
+            // Switch ship class
+            _currentShipClassIndex = classIndex;
+            var mapCenter = _playerShip?.Position ?? new Vector2(4096f, 4096f);
+            
+            // Create new ship instance
+            if (classIndex == 0)
+            {
+                _playerShip = new PlayerShip(GraphicsDevice, Content);
+            }
+            else
+            {
+                _playerShip = new ShipFriendly(GraphicsDevice, Content);
+            }
+            _playerShip.Position = mapCenter;
+            
+            // Update UI label
+            if (_shipClassLabel != null)
+            {
+                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly")}";
+            }
+            
+            // Sync preview index if preview is active
+            if (_isPreviewActive)
+            {
+                _previewShipIndex = _currentShipClassIndex;
+                UpdatePreviewShipLabel();
+            }
+            
+            // Load settings for the new class
+            LoadCurrentShipSettings();
+        }
+        
+        private void SaveCurrentShipSettings()
+        {
+            if (_playerShip == null) return;
+            
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
+            
+            try
+            {
+                var settings = new
+                {
+                    ShipSpeed = _playerShip.MoveSpeed,
+                    TurnRate = _playerShip.RotationSpeed,
+                    Inertia = _playerShip.Inertia,
+                    AimRotationSpeed = _playerShip.AimRotationSpeed
+                };
+                
+                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(filePath, json);
+                System.Console.WriteLine($"Saved {className} settings to: {filePath}");
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"Failed to save {className} settings: {ex.Message}");
+            }
+        }
+        
+        private void LoadCurrentShipSettings()
+        {
+            if (_playerShip == null) return;
+            
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
+            
+            try
+            {
+                if (File.Exists(filePath))
+                {
+                    var json = File.ReadAllText(filePath);
+                    var settings = JsonSerializer.Deserialize<JsonElement>(json);
+                    
+                    // Load ship speed
+                    if (settings.TryGetProperty("ShipSpeed", out var shipSpeedElement))
+                    {
+                        var shipSpeed = shipSpeedElement.GetSingle();
+                        _playerShip.MoveSpeed = shipSpeed;
+                        if (_speedSlider != null) _speedSlider.Value = shipSpeed;
+                        if (_speedLabel != null) _speedLabel.Text = $"Speed: {shipSpeed:F0}";
+                    }
+                    
+                    // Load turn rate
+                    if (settings.TryGetProperty("TurnRate", out var turnRateElement))
+                    {
+                        var turnRate = turnRateElement.GetSingle();
+                        _playerShip.RotationSpeed = turnRate;
+                        if (_turnRateSlider != null) _turnRateSlider.Value = turnRate;
+                        if (_turnRateLabel != null) _turnRateLabel.Text = $"Turn Rate: {turnRate:F1}";
+                    }
+                    
+                    // Load inertia
+                    if (settings.TryGetProperty("Inertia", out var inertiaElement))
+                    {
+                        var inertia = inertiaElement.GetSingle();
+                        _playerShip.Inertia = inertia;
+                        if (_inertiaSlider != null) _inertiaSlider.Value = inertia;
+                        if (_inertiaLabel != null) _inertiaLabel.Text = $"Inertia: {inertia:F2}";
+                    }
+                    
+                    // Load aim rotation speed
+                    if (settings.TryGetProperty("AimRotationSpeed", out var aimRotationSpeedElement))
+                    {
+                        var aimRotationSpeed = aimRotationSpeedElement.GetSingle();
+                        _playerShip.AimRotationSpeed = aimRotationSpeed;
+                        if (_aimRotationSpeedSlider != null) _aimRotationSpeedSlider.Value = aimRotationSpeed;
+                        if (_aimRotationSpeedLabel != null) _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {aimRotationSpeed:F1}";
+                    }
+                    
+                    System.Console.WriteLine($"Loaded {className} settings from: {filePath}");
+                }
+                else
+                {
+                    System.Console.WriteLine($"No saved settings found for {className}, using defaults");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load {className} settings: {ex.Message}");
+            }
+        }
+        
         private void DrawMinimap(SpriteBatch spriteBatch)
         {
-            if (_minimapBackgroundTexture == null || _minimapPlayerDotTexture == null || _minimapViewportOutlineTexture == null)
+            if (_minimapBackgroundTexture == null || _minimapPlayerDotTexture == null || _minimapFriendlyDotTexture == null || _minimapViewportOutlineTexture == null)
                 return;
                 
             int minimapX = GraphicsDevice.Viewport.Width - MinimapSize - 10;
@@ -1818,6 +2290,25 @@ namespace Planet9.Scenes
                 return new Vector2(
                     minimapX + worldPos.X * minimapScale,
                     minimapY + worldPos.Y * minimapScale
+                );
+            }
+            
+            // Draw friendly ships on minimap
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                var friendlyScreenPos = WorldToMinimap(friendlyShip.Position);
+                var friendlyDotSize = 3f; // Slightly smaller than player dot
+                
+                spriteBatch.Draw(
+                    _minimapFriendlyDotTexture,
+                    friendlyScreenPos,
+                    null,
+                    Color.Lime, // Green for friendly ships
+                    0f,
+                    Vector2.Zero,
+                    friendlyDotSize,
+                    SpriteEffects.None,
+                    0f
                 );
             }
             
