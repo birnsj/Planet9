@@ -37,14 +37,14 @@ namespace Planet9.Scenes
         
         // Player ship
         private PlayerShip? _playerShip;
-        private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = ShipFriendly
+        private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = FriendlyShip
         private Label? _shipClassLabel;
         private TextButton? _shipClassLeftButton;
         private TextButton? _shipClassRightButton;
         
         // Friendly ships
-        private System.Collections.Generic.List<ShipFriendly> _friendlyShips = new System.Collections.Generic.List<ShipFriendly>();
-        private System.Collections.Generic.Dictionary<ShipFriendly, float> _friendlyShipAlpha = new System.Collections.Generic.Dictionary<ShipFriendly, float>();
+        private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipAlpha = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
         private System.Random _random = new System.Random();
         
         // Lasers
@@ -200,7 +200,7 @@ namespace Planet9.Scenes
             // Create 8 friendly ships at random positions
             for (int i = 0; i < 8; i++)
             {
-                var friendlyShip = new ShipFriendly(GraphicsDevice, Content);
+                var friendlyShip = new FriendlyShip(GraphicsDevice, Content);
                 // Random position within map bounds (with some margin from edges)
                 float margin = 500f;
                 float x = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
@@ -734,10 +734,10 @@ namespace Planet9.Scenes
             _shipClassLeftButton.Click += (s, a) => SwitchShipClass(0);
             shipClassButtonContainer.Widgets.Add(_shipClassLeftButton);
             
-            // Right arrow button (switch to ShipFriendly)
+            // Right arrow button (switch to FriendlyShip)
             _shipClassRightButton = new TextButton
             {
-                Text = "ShipFriendly →",
+                Text = "FriendlyShip →",
                 Width = 120,
                 Height = 30
             };
@@ -910,7 +910,7 @@ namespace Planet9.Scenes
             // Update ship class label
             if (_shipClassLabel != null)
             {
-                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly")}";
+                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip")}";
             }
             
             _previousMouseState = Mouse.GetState();
@@ -2118,7 +2118,7 @@ namespace Planet9.Scenes
         {
             if (_previewShipLabel == null) return;
             
-            string className = _previewShipIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            string className = _previewShipIndex == 0 ? "PlayerShip" : "FriendlyShip";
             _previewShipLabel.Text = $"{className} ({_previewShipIndex + 1}/2)";
         }
         
@@ -2140,14 +2140,14 @@ namespace Planet9.Scenes
             }
             else
             {
-                _playerShip = new ShipFriendly(GraphicsDevice, Content);
+                _playerShip = new FriendlyShip(GraphicsDevice, Content);
             }
             _playerShip.Position = mapCenter;
             
             // Update UI label
             if (_shipClassLabel != null)
             {
-                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly")}";
+                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip")}";
             }
             
             // Sync preview index if preview is active
@@ -2165,7 +2165,7 @@ namespace Planet9.Scenes
         {
             if (_playerShip == null) return;
             
-            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip";
             var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
             
             try
@@ -2192,7 +2192,7 @@ namespace Planet9.Scenes
         {
             if (_playerShip == null) return;
             
-            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "ShipFriendly";
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip";
             var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
             
             try

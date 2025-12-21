@@ -1,64 +1,69 @@
-#begin DefaultFont.spritefont
+#begin spritefont/DefaultFont.spritefont
 /importer:FontDescriptionImporter
 /processor:FontDescriptionProcessor
 /build:DefaultFont.spritefont
 
-#begin galaxy.png
+#begin png/galaxy.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:galaxy.png
 
-#begin ship1.png
+#begin png/ship1.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:ship1.png
 
-#begin ship1-128.png
+#begin png/ship1-128.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:ship1-128.png
 
-#begin ship1-256.png
+#begin png/ship1-256.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:ship1-256.png
 
-#begin ship2-128.png
+#begin png/ship2.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:ship2.png
+
+#begin png/ship2-128.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:ship2-128.png
 
-#begin ship2-256.png
+#begin png/ship2-256.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:ship2-256.png
 
-#begin cursor1.png
+#begin png/cursor1.png
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:cursor1.png
 
-#begin galaxy1.ogg
+#begin ogg/galaxy1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor
 /build:galaxy1.ogg
 
-#begin mainmenu1.ogg
+#begin ogg/mainmenu1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor
 /build:mainmenu1.ogg
 
-#begin shipfire1.ogg
+#begin ogg/shipfire1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor
 /build:shipfire1.ogg
 
-#begin shipidle1.ogg
+#begin ogg/shipidle1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor
 /build:shipidle1.ogg
 
-#begin shipfly1.ogg
+#begin ogg/shipfly1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor
 /build:shipfly1.ogg

@@ -25,11 +25,23 @@
 
   <!-- Copy content files to output directory -->
   <Target Name="CopyContent" AfterTargets="Build">
+    <!-- First, copy xnb files from build output to Content/xnb -->
     <ItemGroup>
-      <ContentFiles Include="Content\bin\DesktopGL\Content\*.xnb" />
+      <BuildContentFiles Include="Content\bin\DesktopGL\Content\*.xnb" />
+      <BuildContentMgContent Include="Content\bin\DesktopGL\Content\*.mgcontent" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BuildContentFiles)" 
+          DestinationFolder="Content\xnb\" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(BuildContentMgContent)" 
+          DestinationFolder="Content\xnb\" 
+          SkipUnchangedFiles="true" />
+    <!-- Then, copy from Content/xnb to output directory -->
+    <ItemGroup>
+      <ContentFiles Include="Content\xnb\*.xnb" />
     </ItemGroup>
     <Copy SourceFiles="@(ContentFiles)" 
-          DestinationFolder="$(OutputPath)Content\" 
+          DestinationFolder="$(OutputPath)Content\xnb\" 
           SkipUnchangedFiles="true" />
   </Target>
 
