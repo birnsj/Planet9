@@ -76,7 +76,7 @@ namespace Planet9.Scenes
             // Instructions label
             _instructionsLabel = new Label
             {
-                Text = "Press Any Key or Click to Start",
+                Text = "Press Space to Start",
                 TextColor = Microsoft.Xna.Framework.Color.Yellow,
                 GridColumn = 0,
                 GridRow = 3,
@@ -123,32 +123,22 @@ namespace Planet9.Scenes
             }
             
             var keyboardState = Keyboard.GetState();
-            var mouseState = Mouse.GetState();
 
             // Update Myra input
             _desktop?.UpdateInput();
 
-            // Check for any key press (except None)
-            bool anyKeyPressed = false;
-            foreach (Keys key in Enum.GetValues(typeof(Keys)))
+            // Check for Space bar press (not held down) to start game immediately
+            if (keyboardState.IsKeyDown(Keys.Space) && !_previousKeyboardState.IsKeyDown(Keys.Space))
             {
-                if (key != Keys.None && keyboardState.IsKeyDown(key))
-                {
-                    anyKeyPressed = true;
-                    break;
-                }
-            }
-
-            // Check for any mouse button press
-            bool anyMouseButtonPressed = mouseState.LeftButton == ButtonState.Pressed ||
-                                       mouseState.RightButton == ButtonState.Pressed ||
-                                       mouseState.MiddleButton == ButtonState.Pressed;
-
-            if (anyKeyPressed || anyMouseButtonPressed)
-            {
-                // Transition to game scene on any input
+                // Transition to game scene immediately on Space press
                 var sceneManager = (SceneManager)Game.Services.GetService(typeof(SceneManager));
-                sceneManager?.ChangeScene(new GameScene(Game));
+                if (sceneManager != null)
+                {
+                    // Create and load game scene immediately
+                    var gameScene = new GameScene(Game);
+                    sceneManager.ChangeScene(gameScene);
+                    // Scene is now active and will start immediately
+                }
             }
 
             _previousKeyboardState = keyboardState;

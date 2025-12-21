@@ -16,10 +16,14 @@ namespace Planet9.Entities
         public float RotationSpeed { get; set; } = 5f; // radians per second (for movement)
         public float AimRotationSpeed { get; set; } = 5f; // radians per second (for aiming at cursor when stationary)
         public float Inertia { get; set; } = 0.9f; // Inertia/damping factor (0-1, higher = more inertia)
+        public float Drift { get; set; } = 0f; // Drift amount when idle (0 = no drift, higher = more random direction drift)
         private bool _isMoving = false;
         private Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
         private Vector2? _aimTarget = null; // Target position to aim at when not moving
         private EngineTrail? _engineTrail;
+        private System.Random _driftRandom = new System.Random(); // Random for drift direction
+        private float _driftDirection = 0f; // Current drift direction in radians
+        private float _driftDirectionChangeTimer = 0f; // Timer for changing drift direction
 
         public PlayerShip(GraphicsDevice graphicsDevice, ContentManager content)
         {
@@ -209,6 +213,29 @@ namespace Planet9.Entities
                 if (_velocity.LengthSquared() < 1f)
                 {
                     _velocity = Vector2.Zero;
+                }
+                
+                // Apply drift when idle (not moving and velocity is near zero)
+                if (Drift > 0f && _velocity.LengthSquared() < 1f)
+                {
+                    // Change drift direction periodically (every 1-3 seconds)
+                    _driftDirectionChangeTimer -= deltaTime;
+                    if (_driftDirectionChangeTimer <= 0f)
+                    {
+                        // Pick a new random drift direction
+                        _driftDirection = (float)(_driftRandom.NextDouble() * MathHelper.TwoPi);
+                        _driftDirectionChangeTimer = (float)(_driftRandom.NextDouble() * 2f + 1f); // 1-3 seconds
+                    }
+                    
+                    // Apply drift velocity in random direction
+                    float driftSpeed = Drift * 50f; // Scale drift value to pixels per second
+                    Vector2 driftVelocity = new Vector2(
+                        (float)Math.Cos(_driftDirection),
+                        (float)Math.Sin(_driftDirection)
+                    ) * driftSpeed;
+                    
+                    // Apply drift to position
+                    Position += driftVelocity * deltaTime;
                 }
                 
                 // When not moving, rotate toward aim target (mouse cursor/firing direction)

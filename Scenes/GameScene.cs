@@ -44,7 +44,8 @@ namespace Planet9.Scenes
         
         // Friendly ships
         private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
-        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipAlpha = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipDecisionTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastAvoidanceTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
         private System.Random _random = new System.Random();
         
         // Lasers
@@ -69,6 +70,14 @@ namespace Planet9.Scenes
         private Label? _panSpeedLabel;
         private HorizontalSlider? _inertiaSlider;
         private Label? _inertiaLabel;
+        private HorizontalSlider? _driftSlider;
+        private Label? _driftLabel;
+        private HorizontalSlider? _avoidanceRangeSlider;
+        private Label? _avoidanceRangeLabel;
+        private float _avoidanceDetectionRange = 300f; // Default avoidance detection range
+        private HorizontalSlider? _shipIdleRateSlider;
+        private Label? _shipIdleRateLabel;
+        private float _shipIdleRate = 0.3f; // Default: 30% chance to idle (0 = always moving, 1 = always idle)
         private TextButton? _saveButton;
         private Label? _saveConfirmationLabel;
         private float _saveConfirmationTimer = 0f;
@@ -98,8 +107,12 @@ namespace Planet9.Scenes
         private float _sfxVolume = 1.0f; // Default SFX volume (0-1)
         private HorizontalSlider? _musicVolumeSlider;
         private Label? _musicVolumeLabel;
+        private CheckBox? _musicEnabledCheckBox;
+        private bool _musicEnabled = true; // Music enabled/disabled state
         private HorizontalSlider? _sfxVolumeSlider;
         private Label? _sfxVolumeLabel;
+        private CheckBox? _sfxEnabledCheckBox;
+        private bool _sfxEnabled = true; // SFX enabled/disabled state
         
         // Ship preview screen
         private bool _isPreviewActive = false;
@@ -170,8 +183,11 @@ namespace Planet9.Scenes
                 {
                     _shipIdleSound = idleSound.CreateInstance();
                     _shipIdleSound.IsLooped = true;
-                    _shipIdleSound.Volume = _sfxVolume; // Use saved SFX volume
-                    _shipIdleSound.Play(); // Start playing idle sound immediately
+                    _shipIdleSound.Volume = _sfxEnabled ? _sfxVolume : 0f; // Use saved SFX volume or mute if disabled
+                    if (_sfxEnabled)
+                    {
+                        _shipIdleSound.Play(); // Start playing idle sound immediately if enabled
+                    }
                     System.Console.WriteLine($"[SHIP SOUND] Idle sound playing. State: {_shipIdleSound.State}, Volume: {_shipIdleSound.Volume}");
                 }
                 
@@ -181,7 +197,7 @@ namespace Planet9.Scenes
                 {
                     _shipFlySound = flySound.CreateInstance();
                     _shipFlySound.IsLooped = true;
-                    _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume (80% of SFX volume)
+                    _shipFlySound.Volume = _sfxEnabled ? _sfxVolume * 0.8f : 0f; // 20% lower than SFX volume or mute if disabled
                     System.Console.WriteLine($"[SHIP SOUND] Fly sound instance created. Volume: {_shipFlySound.Volume}");
                 }
             }
@@ -200,7 +216,49 @@ namespace Planet9.Scenes
             _playerShip.Position = mapCenter;
             _currentShipClassIndex = 0; // Default to PlayerShip
             
-            // Create 8 friendly ships at random positions
+            // Load FriendlyShip settings from saved file
+            float friendlyMoveSpeed = 300f; // Default values
+            float friendlyRotationSpeed = 5f;
+            float friendlyInertia = 0.9f;
+            float friendlyAimRotationSpeed = 5f;
+            float friendlyDrift = 0f; // Default no drift
+            
+            try
+            {
+                var friendlySettingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings_FriendlyShip.json");
+                if (File.Exists(friendlySettingsPath))
+                {
+                    var json = File.ReadAllText(friendlySettingsPath);
+                    var settings = JsonSerializer.Deserialize<JsonElement>(json);
+                    
+                    if (settings.TryGetProperty("ShipSpeed", out var shipSpeedElement))
+                    {
+                        friendlyMoveSpeed = shipSpeedElement.GetSingle();
+                    }
+                    if (settings.TryGetProperty("TurnRate", out var turnRateElement))
+                    {
+                        friendlyRotationSpeed = turnRateElement.GetSingle();
+                    }
+                    if (settings.TryGetProperty("Inertia", out var inertiaElement))
+                    {
+                        friendlyInertia = inertiaElement.GetSingle();
+                    }
+                    if (settings.TryGetProperty("AimRotationSpeed", out var aimRotationSpeedElement))
+                    {
+                        friendlyAimRotationSpeed = aimRotationSpeedElement.GetSingle();
+                    }
+                    if (settings.TryGetProperty("Drift", out var driftElement))
+                    {
+                        friendlyDrift = driftElement.GetSingle();
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load FriendlyShip settings: {ex.Message}");
+            }
+            
+            // Create 8 friendly ships at random positions with saved settings
             for (int i = 0; i < 8; i++)
             {
                 var friendlyShip = new FriendlyShip(GraphicsDevice, Content);
@@ -210,10 +268,12 @@ namespace Planet9.Scenes
                 float y = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
                 friendlyShip.Position = new Vector2(x, y);
                 
-                // Random movement properties with wider speed range
-                friendlyShip.MoveSpeed = (float)(_random.NextDouble() * 400f + 100f); // 100-500 speed (wider range)
-                friendlyShip.RotationSpeed = (float)(_random.NextDouble() * 3f + 2f); // 2-5 rotation speed
-                friendlyShip.Inertia = (float)(_random.NextDouble() * 0.2f + 0.7f); // 0.7-0.9 inertia
+                // Use saved settings instead of random values
+                friendlyShip.MoveSpeed = friendlyMoveSpeed;
+                friendlyShip.RotationSpeed = friendlyRotationSpeed;
+                friendlyShip.Inertia = friendlyInertia;
+                friendlyShip.AimRotationSpeed = friendlyAimRotationSpeed;
+                friendlyShip.Drift = friendlyDrift; // Apply drift setting
                 
                 _friendlyShips.Add(friendlyShip);
             }
@@ -247,7 +307,7 @@ namespace Planet9.Scenes
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 ColumnSpacing = 0,
-                RowSpacing = 5
+                RowSpacing = 8 // Increased spacing for better readability
             };
             
             // Define columns (one column for all elements)
@@ -264,6 +324,10 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Aim rotation speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Drift label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Drift slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Avoidance range label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Avoidance range slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
@@ -278,7 +342,7 @@ namespace Planet9.Scenes
                 GridRow = 0,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_speedLabel);
             
@@ -294,7 +358,7 @@ namespace Planet9.Scenes
                 GridRow = 1,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _speedSlider.ValueChanged += (s, a) =>
             {
@@ -317,7 +381,7 @@ namespace Planet9.Scenes
                 GridRow = 2,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_turnRateLabel);
             
@@ -333,7 +397,7 @@ namespace Planet9.Scenes
                 GridRow = 3,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _turnRateSlider.ValueChanged += (s, a) =>
             {
@@ -355,7 +419,7 @@ namespace Planet9.Scenes
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             
             // Grid size label - bright magenta for visibility
@@ -388,7 +452,7 @@ namespace Planet9.Scenes
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 5,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             
             // Grid size values array
@@ -441,7 +505,7 @@ namespace Planet9.Scenes
                 GridRow = 6,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_aimRotationSpeedLabel);
             
@@ -457,7 +521,7 @@ namespace Planet9.Scenes
                 GridRow = 7,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _aimRotationSpeedSlider.ValueChanged += (s, a) =>
             {
@@ -480,7 +544,7 @@ namespace Planet9.Scenes
                 GridRow = 8,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_inertiaLabel);
             
@@ -496,7 +560,7 @@ namespace Planet9.Scenes
                 GridRow = 9,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _inertiaSlider.ValueChanged += (s, a) =>
             {
@@ -504,11 +568,143 @@ namespace Planet9.Scenes
                 {
                     _playerShip.Inertia = _inertiaSlider.Value;
                     _inertiaLabel.Text = $"Ship Inertia: {_inertiaSlider.Value:F2}";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.Inertia = _inertiaSlider.Value;
+                        }
+                    }
+                    
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
             };
             grid.Widgets.Add(_inertiaSlider);
+            
+            // Drift label
+            _driftLabel = new Label
+            {
+                Text = $"Ship Drift: {(_playerShip?.Drift ?? 0f):F2}",
+                TextColor = new Color(150, 255, 150), // Light green
+                GridColumn = 0,
+                GridRow = 10,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            grid.Widgets.Add(_driftLabel);
+            
+            // Drift slider (0 = no drift, higher = more random direction drift when idle)
+            _driftSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 10f,
+                Value = _playerShip?.Drift ?? 0f,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 11,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            _driftSlider.ValueChanged += (s, a) =>
+            {
+                if (_playerShip != null)
+                {
+                    _playerShip.Drift = _driftSlider.Value;
+                    _driftLabel.Text = $"Ship Drift: {_driftSlider.Value:F2}";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // This ensures friendly ships use the drift value from their own class settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.Drift = _driftSlider.Value; // Update from FriendlyShip settings
+                        }
+                    }
+                    
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
+                }
+            };
+            grid.Widgets.Add(_driftSlider);
+            
+            // Avoidance Detection Range label
+            _avoidanceRangeLabel = new Label
+            {
+                Text = $"Avoidance Detection Range: {_avoidanceDetectionRange:F0}",
+                TextColor = new Color(100, 255, 100), // Light green
+                GridColumn = 0,
+                GridRow = 12,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            grid.Widgets.Add(_avoidanceRangeLabel);
+            
+            // Avoidance Detection Range slider
+            _avoidanceRangeSlider = new HorizontalSlider
+            {
+                Minimum = 100f,
+                Maximum = 1000f,
+                Value = _avoidanceDetectionRange,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 13,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            _avoidanceRangeSlider.ValueChanged += (s, a) =>
+            {
+                _avoidanceDetectionRange = _avoidanceRangeSlider.Value;
+                _avoidanceRangeLabel.Text = $"Avoidance Detection Range: {_avoidanceDetectionRange:F0}";
+                // Auto-save when slider changes
+                SaveCurrentShipSettings();
+            };
+            grid.Widgets.Add(_avoidanceRangeSlider);
+            
+            // Ship Idle Rate label
+            _shipIdleRateLabel = new Label
+            {
+                Text = $"Ship Idle Rate: {(_shipIdleRate * 100f):F0}%",
+                TextColor = new Color(255, 200, 100), // Orange-yellow
+                GridColumn = 0,
+                GridRow = 14,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            grid.Widgets.Add(_shipIdleRateLabel);
+            
+            // Ship Idle Rate slider (0 = always moving, 1 = always idle)
+            _shipIdleRateSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 1f,
+                Value = _shipIdleRate,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 15,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
+            _shipIdleRateSlider.ValueChanged += (s, a) =>
+            {
+                _shipIdleRate = _shipIdleRateSlider.Value;
+                _shipIdleRateLabel.Text = $"Ship Idle Rate: {(_shipIdleRate * 100f):F0}%";
+                // Auto-save when slider changes
+                SaveCurrentShipSettings();
+            };
+            grid.Widgets.Add(_shipIdleRateSlider);
             
             // Music volume label
             _musicVolumeLabel = new Label
@@ -516,12 +712,23 @@ namespace Planet9.Scenes
                 Text = $"Music Volume: {(_musicVolume * 100f):F0}%",
                 TextColor = new Color(100, 200, 255), // Light blue
                 GridColumn = 0,
-                GridRow = 10,
+                GridRow = 16,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_musicVolumeLabel);
+            
+            // Music volume slider and checkbox container
+            var musicVolumeContainer = new HorizontalStackPanel
+            {
+                GridColumn = 0,
+                GridRow = 17,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
             
             // Music volume slider (0-100%)
             _musicVolumeSlider = new HorizontalSlider
@@ -531,23 +738,49 @@ namespace Planet9.Scenes
                 Value = _musicVolume,
                 Width = 200,
                 Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 11,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                VerticalAlignment = VerticalAlignment.Top
             };
             _musicVolumeSlider.ValueChanged += (s, a) =>
             {
                 _musicVolume = _musicVolumeSlider.Value;
                 _musicVolumeLabel.Text = $"Music Volume: {(_musicVolume * 100f):F0}%";
-                // Apply volume to background music
-                if (_backgroundMusicInstance != null)
+                // Apply volume to background music (only if enabled)
+                if (_backgroundMusicInstance != null && _musicEnabled)
                 {
                     _backgroundMusicInstance.Volume = _musicVolume;
                 }
             };
-            grid.Widgets.Add(_musicVolumeSlider);
+            musicVolumeContainer.Widgets.Add(_musicVolumeSlider);
+            
+            // Music enabled checkbox
+            _musicEnabledCheckBox = new CheckBox
+            {
+                Text = "Music",
+                IsChecked = _musicEnabled
+            };
+            _musicEnabledCheckBox.Click += (s, a) =>
+            {
+                _musicEnabled = _musicEnabledCheckBox.IsChecked;
+                // Apply or mute music based on checkbox state
+                if (_backgroundMusicInstance != null)
+                {
+                    if (_musicEnabled)
+                    {
+                        _backgroundMusicInstance.Volume = _musicVolume;
+                        if (_backgroundMusicInstance.State == SoundState.Stopped)
+                        {
+                            _backgroundMusicInstance.Play();
+                        }
+                    }
+                    else
+                    {
+                        _backgroundMusicInstance.Volume = 0f;
+                    }
+                }
+            };
+            musicVolumeContainer.Widgets.Add(_musicEnabledCheckBox);
+            grid.Widgets.Add(musicVolumeContainer);
             
             // SFX volume label
             _sfxVolumeLabel = new Label
@@ -555,12 +788,23 @@ namespace Planet9.Scenes
                 Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%",
                 TextColor = new Color(255, 150, 100), // Orange
                 GridColumn = 0,
-                GridRow = 12,
+                GridRow = 18,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             grid.Widgets.Add(_sfxVolumeLabel);
+            
+            // SFX volume slider and checkbox container
+            var sfxVolumeContainer = new HorizontalStackPanel
+            {
+                GridColumn = 0,
+                GridRow = 19,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
+            };
             
             // SFX volume slider (0-100%)
             _sfxVolumeSlider = new HorizontalSlider
@@ -570,23 +814,60 @@ namespace Planet9.Scenes
                 Value = _sfxVolume,
                 Width = 200,
                 Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 13,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                VerticalAlignment = VerticalAlignment.Top
             };
             _sfxVolumeSlider.ValueChanged += (s, a) =>
             {
                 _sfxVolume = _sfxVolumeSlider.Value;
                 _sfxVolumeLabel.Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%";
-                // Apply volume to SFX instances
-                if (_shipFlySound != null)
+                // Apply volume to SFX instances (only if enabled)
+                if (_shipFlySound != null && _sfxEnabled)
                 {
                     _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume
                 }
+                if (_shipIdleSound != null && _sfxEnabled)
+                {
+                    _shipIdleSound.Volume = _sfxVolume;
+                }
             };
-            grid.Widgets.Add(_sfxVolumeSlider);
+            sfxVolumeContainer.Widgets.Add(_sfxVolumeSlider);
+            
+            // SFX enabled checkbox
+            _sfxEnabledCheckBox = new CheckBox
+            {
+                Text = "SFX",
+                IsChecked = _sfxEnabled
+            };
+            _sfxEnabledCheckBox.Click += (s, a) =>
+            {
+                _sfxEnabled = _sfxEnabledCheckBox.IsChecked;
+                // Apply or mute SFX based on checkbox state
+                if (_shipFlySound != null)
+                {
+                    if (_sfxEnabled)
+                    {
+                        _shipFlySound.Volume = _sfxVolume * 0.8f;
+                    }
+                    else
+                    {
+                        _shipFlySound.Volume = 0f;
+                    }
+                }
+                if (_shipIdleSound != null)
+                {
+                    if (_sfxEnabled)
+                    {
+                        _shipIdleSound.Volume = _sfxVolume;
+                    }
+                    else
+                    {
+                        _shipIdleSound.Volume = 0f;
+                    }
+                }
+            };
+            sfxVolumeContainer.Widgets.Add(_sfxEnabledCheckBox);
+            grid.Widgets.Add(sfxVolumeContainer);
             
             // Create Camera Settings panel
             var cameraSettingsGrid = new Grid
@@ -616,7 +897,7 @@ namespace Planet9.Scenes
                 GridRow = 0,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             cameraSettingsGrid.Widgets.Add(_zoomLabel);
             
@@ -629,7 +910,7 @@ namespace Planet9.Scenes
                 GridRow = 1,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             cameraSettingsGrid.Widgets.Add(_cameraSpeedLabel);
             
@@ -645,7 +926,7 @@ namespace Planet9.Scenes
                 GridRow = 2,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _cameraSpeedSlider.ValueChanged += (s, a) =>
             {
@@ -663,7 +944,7 @@ namespace Planet9.Scenes
                 GridRow = 3,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             cameraSettingsGrid.Widgets.Add(_panSpeedLabel);
             
@@ -679,7 +960,7 @@ namespace Planet9.Scenes
                 GridRow = 4,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _panSpeedSlider.ValueChanged += (s, a) =>
             {
@@ -697,7 +978,7 @@ namespace Planet9.Scenes
                 GridRow = 5,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             cameraSettingsGrid.Widgets.Add(_cameraInertiaLabel);
             
@@ -713,7 +994,7 @@ namespace Planet9.Scenes
                 GridRow = 6,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
             };
             _cameraInertiaSlider.ValueChanged += (s, a) =>
             {
@@ -739,7 +1020,7 @@ namespace Planet9.Scenes
                 Background = new Myra.Graphics2D.Brushes.SolidBrush(new Microsoft.Xna.Framework.Color(20, 20, 20, 220)), // Semi-transparent dark background
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+                Padding = new Myra.Graphics2D.Thickness(15, 15, 15, 15) // Add padding around the panel content
             };
             uiPanel.Widgets.Add(grid);
             
@@ -1077,12 +1358,12 @@ namespace Planet9.Scenes
                         {
                             _sfxVolumeLabel.Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%";
                         }
-                        // Apply to SFX instances
-                        if (_shipIdleSound != null)
+                        // Apply to SFX instances (only if enabled)
+                        if (_shipIdleSound != null && _sfxEnabled)
                         {
                             _shipIdleSound.Volume = _sfxVolume;
                         }
-                        if (_shipFlySound != null)
+                        if (_shipFlySound != null && _sfxEnabled)
                         {
                             _shipFlySound.Volume = _sfxVolume * 0.8f; // 20% lower than SFX volume
                         }
@@ -1316,8 +1597,8 @@ namespace Planet9.Scenes
                         _shipIdleSound.Stop();
                         System.Console.WriteLine($"[SHIP SOUND] Stopped idle sound");
                     }
-                    // Ensure fly sound is playing (restart if it stopped)
-                    if (_shipFlySound != null && _shipFlySound.State != SoundState.Playing)
+                    // Ensure fly sound is playing (restart if it stopped) - only if SFX is enabled
+                    if (_shipFlySound != null && _sfxEnabled && _shipFlySound.State != SoundState.Playing)
                     {
                         _shipFlySound.Play();
                         System.Console.WriteLine($"[SHIP SOUND] Started/restarted fly sound. State: {_shipFlySound.State}, Volume: {_shipFlySound.Volume}");
@@ -1331,8 +1612,8 @@ namespace Planet9.Scenes
                         _shipFlySound.Stop();
                         System.Console.WriteLine($"[SHIP SOUND] Stopped fly sound");
                     }
-                    // Ensure idle sound is playing (restart if it stopped)
-                    if (_shipIdleSound != null && _shipIdleSound.State != SoundState.Playing)
+                    // Ensure idle sound is playing (restart if it stopped) - only if SFX is enabled
+                    if (_shipIdleSound != null && _sfxEnabled && _shipIdleSound.State != SoundState.Playing)
                     {
                         _shipIdleSound.Play();
                         System.Console.WriteLine($"[SHIP SOUND] Started/restarted idle sound. State: {_shipIdleSound.State}, Volume: {_shipIdleSound.Volume}");
@@ -1532,8 +1813,23 @@ namespace Planet9.Scenes
                 }
             }
             
-            // Update player ship aim target (mouse cursor position when not actively moving)
-            if (_playerShip != null && !_playerShip.IsActivelyMoving())
+            // Check for spacebar to smoothly pan camera back to player
+            if (keyboardState.IsKeyDown(Keys.Space) && !_previousKeyboardState.IsKeyDown(Keys.Space) && _playerShip != null)
+            {
+                // Start panning to player when Space is first pressed
+                _isPanningToPlayer = true;
+                _cameraFollowingPlayer = true; // Enable following when Space is pressed
+            }
+            
+            // Camera movement with WASD - if any WASD key is pressed, use manual camera control and cancel panning
+            bool isWASDPressed = keyboardState.IsKeyDown(Keys.W) || keyboardState.IsKeyDown(Keys.A) || 
+                                 keyboardState.IsKeyDown(Keys.S) || keyboardState.IsKeyDown(Keys.D);
+            
+            // Check if camera is panning (WASD pressed, panning to player, or camera has velocity from manual control)
+            bool isCameraPanning = _isPanningToPlayer || isWASDPressed || _cameraVelocity.LengthSquared() > 1f || !_cameraFollowingPlayer;
+            
+            // Update player ship aim target (mouse cursor position when not actively moving AND camera is not panning)
+            if (_playerShip != null && !_playerShip.IsActivelyMoving() && !isCameraPanning)
             {
                 // Convert mouse position to world coordinates for aiming
                 var mouseScreenPos = new Vector2(mouseState.X, mouseState.Y);
@@ -1544,22 +1840,11 @@ namespace Planet9.Scenes
             }
             else if (_playerShip != null)
             {
-                _playerShip.SetAimTarget(null); // Clear aim target when actively moving
+                _playerShip.SetAimTarget(null); // Clear aim target when actively moving or camera is panning
             }
             
             // Update player ship first so we have current position
             _playerShip?.Update(gameTime);
-            
-            // Check for spacebar to smoothly pan camera back to player
-            if (keyboardState.IsKeyDown(Keys.Space) && _playerShip != null)
-            {
-                // Start or continue panning to player
-                _isPanningToPlayer = true;
-            }
-            
-            // Camera movement with WASD - if any WASD key is pressed, use manual camera control and cancel panning
-            bool isWASDPressed = keyboardState.IsKeyDown(Keys.W) || keyboardState.IsKeyDown(Keys.A) || 
-                                 keyboardState.IsKeyDown(Keys.S) || keyboardState.IsKeyDown(Keys.D);
             
             if (isWASDPressed)
             {
@@ -1602,11 +1887,8 @@ namespace Planet9.Scenes
                 else
                 {
                     _cameraVelocity = Vector2.Zero;
-                    // Reattach camera to player when WASD is released and velocity stops
-                    if (!_cameraFollowingPlayer && _playerShip != null)
-                    {
-                        _cameraFollowingPlayer = true;
-                    }
+                    // Don't automatically reattach camera to player - let user control it manually
+                    // Camera will only follow player when Space bar is pressed (panning to player)
                 }
             }
             
@@ -1653,8 +1935,8 @@ namespace Planet9.Scenes
                     if (moveDistance > distance)
                     {
                         _cameraPosition = targetPosition;
-                        _isPanningToPlayer = false;
-                        _cameraFollowingPlayer = true; // Start following player after pan completes
+                        _isPanningToPlayer = false; // Panning complete, camera now attached to player
+                        // _cameraFollowingPlayer stays true - camera will follow player until screen is scrolled
                     }
                     else
                     {
@@ -1672,21 +1954,21 @@ namespace Planet9.Scenes
                     _cameraPosition.X = MathHelper.Clamp(_cameraPosition.X, panMinX, panMaxX);
                     _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, panMinY, panMaxY);
                     
-                    // If we hit a boundary, stop panning
+                    // If we hit a boundary, stop panning but keep following
                     if ((_cameraPosition.X <= panMinX || _cameraPosition.X >= panMaxX || 
                          _cameraPosition.Y <= panMinY || _cameraPosition.Y >= panMaxY) && 
                         _cameraPosition != targetPosition)
                     {
-                        _isPanningToPlayer = false;
-                        _cameraFollowingPlayer = true;
+                        _isPanningToPlayer = false; // Panning stopped at boundary, camera now attached to player
+                        // _cameraFollowingPlayer stays true - camera will follow player until screen is scrolled
                     }
                 }
                 else
                 {
-                    // Reached player position
+                    // Reached player position - panning complete, camera now attached to player
                     _cameraPosition = targetPosition;
                     _isPanningToPlayer = false;
-                    _cameraFollowingPlayer = true; // Start following player after pan completes
+                    // _cameraFollowingPlayer stays true - camera will follow player until screen is scrolled
                     
                     // Clamp final position to map bounds
                     var finalViewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
@@ -1700,9 +1982,9 @@ namespace Planet9.Scenes
                     _cameraPosition.Y = MathHelper.Clamp(_cameraPosition.Y, finalMinY, finalMaxY);
                 }
             }
-            else if (_cameraFollowingPlayer && _playerShip != null)
+            else if (_cameraFollowingPlayer && _playerShip != null && !_isPanningToPlayer)
             {
-                // Keep camera on player after panning completes, but clamp to map bounds
+                // Keep camera locked on player after panning completes - stays attached until screen is scrolled (WASD)
                 _cameraPosition = _playerShip.Position;
                 
                 // Clamp to map bounds
@@ -1718,14 +2000,47 @@ namespace Planet9.Scenes
             }
             // If neither WASD nor spacebar and not following, camera stays where it is
             
-            // Update friendly ships with collision avoidance
+            // Update friendly ships with collision avoidance (including player)
             foreach (var friendlyShip in _friendlyShips)
             {
-                // Collision avoidance: steer away from nearby ships
-                const float avoidanceRadius = 300f; // Distance to start avoiding
-                const float avoidanceForce = 200f; // How strongly to avoid (pixels per second)
+                // Collision avoidance: steer away from nearby ships and player
+                float avoidanceRadius = _avoidanceDetectionRange; // Use slider value for other ships
+                float avoidanceForce = 200f; // How strongly to avoid (pixels per second)
+                float playerAvoidanceRadius = _avoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
+                float playerAvoidanceForce = 300f; // Stronger avoidance for player
                 Vector2 avoidanceVector = Vector2.Zero;
                 
+                // Avoid player ship - create smooth orbital motion
+                if (_playerShip != null)
+                {
+                    Vector2 toPlayer = _playerShip.Position - friendlyShip.Position;
+                    float distance = toPlayer.Length();
+                    
+                    if (distance < playerAvoidanceRadius && distance > 0.1f)
+                    {
+                        // Calculate avoidance strength (stronger when closer to player)
+                        float avoidanceStrength = (playerAvoidanceRadius - distance) / playerAvoidanceRadius;
+                        
+                        // Calculate tangential direction (perpendicular to direction to player) for orbital motion
+                        // Rotate the direction vector by 90 degrees to get tangential direction
+                        Vector2 tangential = new Vector2(-toPlayer.Y, toPlayer.X);
+                        tangential.Normalize();
+                        
+                        // Blend radial push (away from player) with tangential motion (around player)
+                        // More tangential when further away, more radial when very close
+                        float tangentialWeight = MathHelper.Clamp(distance / (playerAvoidanceRadius * 0.5f), 0.3f, 0.8f);
+                        Vector2 radialDirection = -toPlayer;
+                        radialDirection.Normalize();
+                        
+                        // Combine tangential and radial directions
+                        Vector2 avoidanceDirection = tangential * tangentialWeight + radialDirection * (1f - tangentialWeight);
+                        avoidanceDirection.Normalize();
+                        
+                        avoidanceVector += avoidanceDirection * avoidanceStrength * playerAvoidanceForce;
+                    }
+                }
+                
+                // Avoid other friendly ships
                 foreach (var otherShip in _friendlyShips)
                 {
                     if (otherShip == friendlyShip) continue;
@@ -1742,108 +2057,101 @@ namespace Planet9.Scenes
                     }
                 }
                 
-                // Apply avoidance by pushing position away from nearby ships
+                // Apply avoidance by smoothly redirecting movement
                 if (avoidanceVector.LengthSquared() > 0.1f)
                 {
-                    // Push the ship away from nearby ships
-                    friendlyShip.Position += avoidanceVector * deltaTime;
+                    // Normalize the avoidance vector to get direction
+                    avoidanceVector.Normalize();
                     
-                    // If ship is moving, redirect it away from the collision
+                    // Calculate a new target position that curves around the obstacle
+                    // Use a look-ahead distance based on ship speed to allow smooth turning
+                    float lookAheadDistance = friendlyShip.MoveSpeed * 0.5f; // Look ahead 0.5 seconds
+                    
+                    // If ship is moving, calculate current movement direction from rotation
+                    Vector2 newAvoidanceTarget;
                     if (friendlyShip.IsActivelyMoving())
                     {
-                        // Set a new target in the avoidance direction to steer away
-                        Vector2 avoidanceTarget = friendlyShip.Position + avoidanceVector * 150f;
-                        // Don't clamp - allow ships to go outside map bounds
-                        friendlyShip.SetTargetPosition(avoidanceTarget);
+                        // Calculate current movement direction from ship's rotation
+                        // Ship rotation: 0 = up (north), so forward direction is:
+                        float currentRotation = friendlyShip.Rotation;
+                        Vector2 currentDirection = new Vector2(
+                            (float)Math.Sin(currentRotation),
+                            -(float)Math.Cos(currentRotation)
+                        );
+                        
+                        // Blend current movement direction with avoidance direction for smooth turning
+                        // More avoidance when closer, more current direction when further
+                        float blendFactor = 0.5f; // 50% avoidance, 50% current direction (reduced for smoother transitions)
+                        Vector2 blendedDirection = avoidanceVector * blendFactor + currentDirection * (1f - blendFactor);
+                        blendedDirection.Normalize();
+                        newAvoidanceTarget = friendlyShip.Position + blendedDirection * lookAheadDistance;
+                    }
+                    else
+                    {
+                        // If not moving, start moving in avoidance direction
+                        newAvoidanceTarget = friendlyShip.Position + avoidanceVector * lookAheadDistance;
+                    }
+                    
+                    // Smoothly blend with previous avoidance target to prevent jittery movement
+                    Vector2 smoothedTarget;
+                    if (_friendlyShipLastAvoidanceTarget.ContainsKey(friendlyShip))
+                    {
+                        // Lerp between old and new target for smooth transitions
+                        smoothedTarget = Vector2.Lerp(_friendlyShipLastAvoidanceTarget[friendlyShip], newAvoidanceTarget, 0.3f);
+                    }
+                    else
+                    {
+                        smoothedTarget = newAvoidanceTarget;
+                    }
+                    _friendlyShipLastAvoidanceTarget[friendlyShip] = smoothedTarget;
+                    
+                    // Update target to curve around obstacle
+                    friendlyShip.SetTargetPosition(smoothedTarget);
+                }
+                else
+                {
+                    // Clear avoidance target when no avoidance needed
+                    if (_friendlyShipLastAvoidanceTarget.ContainsKey(friendlyShip))
+                    {
+                        _friendlyShipLastAvoidanceTarget.Remove(friendlyShip);
                     }
                 }
                 
                 friendlyShip.Update(gameTime);
                 
-                // Check if ship is near or outside map edges and fade out
-                const float fadeStartDistance = 200f; // Start fading when within 200 pixels of edge
-                const float fadeSpeed = 2.0f; // Fade speed per second
-                float distanceToEdge = Math.Min(
-                    Math.Min(friendlyShip.Position.X, MapSize - friendlyShip.Position.X),
-                    Math.Min(friendlyShip.Position.Y, MapSize - friendlyShip.Position.Y)
+                // Keep ship within map bounds - clamp position to prevent leaving map
+                const float shipMargin = 100f; // Keep ships at least 100 pixels from edges
+                friendlyShip.Position = new Vector2(
+                    MathHelper.Clamp(friendlyShip.Position.X, shipMargin, MapSize - shipMargin),
+                    MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, MapSize - shipMargin)
                 );
                 
-                if (distanceToEdge < fadeStartDistance)
+                // Randomly decide to move or idle, or fly across map
+                // Use a timer-based system instead of random checks every frame for smoother decisions
+                if (!_friendlyShipDecisionTimer.ContainsKey(friendlyShip))
                 {
-                    // Fade out as ship approaches edge
-                    float fadeAmount = (fadeStartDistance - distanceToEdge) / fadeStartDistance;
-                    if (_friendlyShipAlpha.ContainsKey(friendlyShip))
-                    {
-                        _friendlyShipAlpha[friendlyShip] = Math.Max(0f, 1.0f - fadeAmount);
-                    }
-                    else
-                    {
-                        _friendlyShipAlpha[friendlyShip] = Math.Max(0f, 1.0f - fadeAmount);
-                    }
-                }
-                else if (friendlyShip.Position.X < -500 || friendlyShip.Position.X > MapSize + 500 ||
-                         friendlyShip.Position.Y < -500 || friendlyShip.Position.Y > MapSize + 500)
-                {
-                    // Ship is far outside map - fully faded, respawn on opposite side
-                    if (_friendlyShipAlpha.ContainsKey(friendlyShip) && _friendlyShipAlpha[friendlyShip] <= 0.1f)
-                    {
-                        // Respawn on opposite side of map
-                        float newX, newY;
-                        if (friendlyShip.Position.X < 0)
-                        {
-                            newX = MapSize + 200f; // Spawn on right edge
-                        }
-                        else if (friendlyShip.Position.X > MapSize)
-                        {
-                            newX = -200f; // Spawn on left edge
-                        }
-                        else
-                        {
-                            newX = friendlyShip.Position.X;
-                        }
-                        
-                        if (friendlyShip.Position.Y < 0)
-                        {
-                            newY = MapSize + 200f; // Spawn on bottom edge
-                        }
-                        else if (friendlyShip.Position.Y > MapSize)
-                        {
-                            newY = -200f; // Spawn on top edge
-                        }
-                        else
-                        {
-                            newY = friendlyShip.Position.Y;
-                        }
-                        
-                        friendlyShip.Position = new Vector2(newX, newY);
-                        _friendlyShipAlpha[friendlyShip] = 1.0f; // Reset to fully visible
-                        
-                        // Set a target across the map
-                        float targetX = MapSize - newX;
-                        float targetY = MapSize - newY;
-                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
-                    }
-                }
-                else
-                {
-                    // Ship is inside map bounds - ensure fully visible
-                    if (_friendlyShipAlpha.ContainsKey(friendlyShip))
-                    {
-                        _friendlyShipAlpha[friendlyShip] = Math.Min(1.0f, _friendlyShipAlpha[friendlyShip] + fadeSpeed * deltaTime);
-                    }
-                    else
-                    {
-                        _friendlyShipAlpha[friendlyShip] = 1.0f;
-                    }
+                    // Initialize decision timer with random value (2-8 seconds)
+                    _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
                 }
                 
-                // Randomly decide to move or idle, or fly across map
-                // If not currently moving, periodically pick a new random target
-                if (!friendlyShip.IsActivelyMoving() && _random.NextDouble() < 0.002f)
+                // Decrement timer
+                _friendlyShipDecisionTimer[friendlyShip] -= deltaTime;
+                
+                // Make decision when timer expires
+                if (!friendlyShip.IsActivelyMoving() && _friendlyShipDecisionTimer[friendlyShip] <= 0f)
                 {
-                    // 30% chance to fly across the whole map (edge to edge)
-                    if (_random.NextDouble() < 0.3f)
+                    // Reset timer for next decision (2-8 seconds)
+                    _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
+                    
+                    // Check if ship should idle based on idle rate setting
+                    if (_random.NextDouble() < _shipIdleRate)
                     {
+                        // Ship should idle - don't set a new target, let it stay idle
+                        // Ships will naturally stop moving when they reach their current target
+                    }
+                    else if (_random.NextDouble() < 0.3f)
+                    {
+                        // 30% chance to fly across the whole map (edge to edge)
                         // Pick a random edge to start from and opposite edge to fly to
                         int startEdge = _random.Next(4); // 0=top, 1=right, 2=bottom, 3=left
                         float startX, startY, targetX, targetY;
@@ -1878,21 +2186,49 @@ namespace Planet9.Scenes
                         
                         friendlyShip.Position = new Vector2(startX, startY);
                         friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
-                        _friendlyShipAlpha[friendlyShip] = 1.0f; // Start fully visible
                     }
                     else
                     {
-                        // Normal random movement within map
-                        float margin = 500f;
-                        float targetX = (float)(_random.NextDouble() * (MapSize - margin * 2) + margin);
-                        float targetY = (float)(_random.NextDouble() * (MapSize - margin * 2) + margin);
+                        // Normal random movement within map - pick a target in a smooth direction
+                        
+                        // Calculate a direction based on current position to avoid sudden 180-degree turns
+                        Vector2 currentPos = friendlyShip.Position;
+                        Vector2 mapCenter = new Vector2(MapSize / 2f, MapSize / 2f);
+                        Vector2 toCenter = mapCenter - currentPos;
+                        toCenter.Normalize();
+                        
+                        // Pick a random direction but bias it slightly away from center for more interesting movement
+                        float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
+                        Vector2 randomDirection = new Vector2(
+                            (float)Math.Cos(randomAngle),
+                            (float)Math.Sin(randomAngle)
+                        );
+                        
+                        // Blend random direction with away-from-center direction (70% random, 30% away from center)
+                        Vector2 blendedDirection = randomDirection * 0.7f + toCenter * 0.3f;
+                        blendedDirection.Normalize();
+                        
+                        // Pick a distance (300-800 pixels) for the target
+                        float targetDistance = (float)(_random.NextDouble() * 500f + 300f);
+                        Vector2 targetOffset = blendedDirection * targetDistance;
+                        Vector2 targetPos = currentPos + targetOffset;
+                        
+                        // Clamp target to map bounds with larger margin to keep targets well within bounds
+                        float targetMargin = 200f; // Keep targets further from edges
+                        float targetX = MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin);
+                        float targetY = MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin);
+                        
                         friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
                     }
                     
-                    // Randomly change speed when picking a new target (50% chance)
-                    if (_random.NextDouble() < 0.5f)
+                    // Don't randomly change speed - use saved settings instead
+                }
+                else if (friendlyShip.IsActivelyMoving())
+                {
+                    // Reset decision timer when ship starts moving (so it doesn't make decisions while moving)
+                    if (_friendlyShipDecisionTimer.ContainsKey(friendlyShip))
                     {
-                        friendlyShip.MoveSpeed = (float)(_random.NextDouble() * 400f + 100f); // 100-500 speed
+                        _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
                     }
                 }
             }
@@ -2068,15 +2404,11 @@ namespace Planet9.Scenes
             // Draw player ship
             _playerShip?.Draw(spriteBatch);
             
-            // Draw friendly ships with fade effect
+            // Draw friendly ships
             foreach (var friendlyShip in _friendlyShips)
             {
-                float alpha = _friendlyShipAlpha.ContainsKey(friendlyShip) ? _friendlyShipAlpha[friendlyShip] : 1.0f;
-                if (alpha > 0.01f) // Only draw if not fully faded
-                {
-                    // Draw ship with alpha (includes engine trail)
-                    friendlyShip.Draw(spriteBatch, alpha);
-                }
+                // Draw ship (includes engine trail)
+                friendlyShip.Draw(spriteBatch);
             }
 
             spriteBatch.End();
@@ -2258,17 +2590,40 @@ namespace Planet9.Scenes
             
             try
             {
-                var settings = new
+                // Only include ShipIdleRate for FriendlyShip, not PlayerShip
+                if (_currentShipClassIndex == 0)
                 {
-                    ShipSpeed = _playerShip.MoveSpeed,
-                    TurnRate = _playerShip.RotationSpeed,
-                    Inertia = _playerShip.Inertia,
-                    AimRotationSpeed = _playerShip.AimRotationSpeed
-                };
-                
-                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(filePath, json);
-                System.Console.WriteLine($"Saved {className} settings to: {filePath}");
+                    // PlayerShip settings (no ShipIdleRate)
+                    var settings = new
+                    {
+                        ShipSpeed = _playerShip.MoveSpeed,
+                        TurnRate = _playerShip.RotationSpeed,
+                        Inertia = _playerShip.Inertia,
+                        AimRotationSpeed = _playerShip.AimRotationSpeed,
+                        Drift = _playerShip.Drift,
+                        AvoidanceDetectionRange = _avoidanceDetectionRange
+                    };
+                    var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                    File.WriteAllText(filePath, json);
+                    System.Console.WriteLine($"Saved {className} settings to: {filePath}");
+                }
+                else
+                {
+                    // FriendlyShip settings (includes ShipIdleRate)
+                    var settings = new
+                    {
+                        ShipSpeed = _playerShip.MoveSpeed,
+                        TurnRate = _playerShip.RotationSpeed,
+                        Inertia = _playerShip.Inertia,
+                        AimRotationSpeed = _playerShip.AimRotationSpeed,
+                        Drift = _playerShip.Drift,
+                        AvoidanceDetectionRange = _avoidanceDetectionRange,
+                        ShipIdleRate = _shipIdleRate
+                    };
+                    var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                    File.WriteAllText(filePath, json);
+                    System.Console.WriteLine($"Saved {className} settings to: {filePath}");
+                }
             }
             catch (Exception ex)
             {
@@ -2324,6 +2679,42 @@ namespace Planet9.Scenes
                         _playerShip.AimRotationSpeed = aimRotationSpeed;
                         if (_aimRotationSpeedSlider != null) _aimRotationSpeedSlider.Value = aimRotationSpeed;
                         if (_aimRotationSpeedLabel != null) _aimRotationSpeedLabel.Text = $"Ship Idle Rotation Speed: {aimRotationSpeed:F1}";
+                    }
+                    
+                    // Load drift
+                    if (settings.TryGetProperty("Drift", out var driftElement))
+                    {
+                        var drift = driftElement.GetSingle();
+                        _playerShip.Drift = drift;
+                        if (_driftSlider != null) _driftSlider.Value = drift;
+                        if (_driftLabel != null) _driftLabel.Text = $"Ship Drift: {drift:F2}";
+                        
+                        // If loading FriendlyShip settings, also update all friendly ships with their own class drift value
+                        if (_currentShipClassIndex == 1)
+                        {
+                            foreach (var friendlyShip in _friendlyShips)
+                            {
+                                friendlyShip.Drift = drift; // Use drift from FriendlyShip settings
+                            }
+                        }
+                    }
+                    
+                    // Load avoidance detection range
+                    if (settings.TryGetProperty("AvoidanceDetectionRange", out var avoidanceRangeElement))
+                    {
+                        var avoidanceRange = avoidanceRangeElement.GetSingle();
+                        _avoidanceDetectionRange = MathHelper.Clamp(avoidanceRange, 100f, 1000f);
+                        if (_avoidanceRangeSlider != null) _avoidanceRangeSlider.Value = _avoidanceDetectionRange;
+                        if (_avoidanceRangeLabel != null) _avoidanceRangeLabel.Text = $"Avoidance Detection Range: {_avoidanceDetectionRange:F0}";
+                    }
+                    
+                    // Load ship idle rate
+                    if (settings.TryGetProperty("ShipIdleRate", out var shipIdleRateElement))
+                    {
+                        var shipIdleRate = shipIdleRateElement.GetSingle();
+                        _shipIdleRate = MathHelper.Clamp(shipIdleRate, 0f, 1f);
+                        if (_shipIdleRateSlider != null) _shipIdleRateSlider.Value = _shipIdleRate;
+                        if (_shipIdleRateLabel != null) _shipIdleRateLabel.Text = $"Ship Idle Rate: {(_shipIdleRate * 100f):F0}%";
                     }
                     
                     System.Console.WriteLine($"Loaded {className} settings from: {filePath}");
