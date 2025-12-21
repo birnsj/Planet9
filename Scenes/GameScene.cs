@@ -20,6 +20,9 @@ namespace Planet9.Scenes
         private Texture2D? _gridPixelTexture;
         private int _gridSize = 128; // 128x128 grid cells (can be changed via slider)
         private bool _gridVisible = false; // Grid visibility toggle (default off)
+        private bool _uiGridVisible = false; // Myra UI grid overlay visibility toggle (default off)
+        private bool _gamePaused = false; // Game pause state (toggled with F12)
+        private const int UIGridSize = 10; // UI grid cell size in pixels
         private const float MapSize = 8192f; // Total map size
         private const int MinimapSize = 200; // Minimap size in pixels (square)
         private Texture2D? _minimapBackgroundTexture;
@@ -50,6 +53,7 @@ namespace Planet9.Scenes
         // UI for zoom display and ship controls
         private Desktop? _desktop;
         private Desktop? _saveButtonDesktop;
+        private Desktop? _coordinateDesktop;
         private Label? _zoomLabel;
         private HorizontalSlider? _speedSlider;
         private HorizontalSlider? _turnRateSlider;
@@ -82,6 +86,8 @@ namespace Planet9.Scenes
         private float _cameraInertia = 0.85f; // Camera inertia factor (0 = no inertia, 1 = full inertia)
         private HorizontalSlider? _cameraInertiaSlider;
         private Label? _cameraInertiaLabel;
+        private Panel? _cameraSettingsPanel;
+        private Label? _mouseCoordinateLabel;
         private HorizontalSlider? _aimRotationSpeedSlider;
         private Label? _aimRotationSpeedLabel;
         private SoundEffectInstance? _backgroundMusicInstance;
@@ -247,20 +253,13 @@ namespace Planet9.Scenes
             // Define columns (one column for all elements)
             grid.ColumnsProportions.Add(new Proportion(ProportionType.Auto));
             
-            // Define rows for each UI element
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Zoom label
+            // Define rows for each UI element (camera controls moved to separate panel)
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Speed label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Turn rate label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Turn rate slider
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera speed label
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Grid size label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Grid size buttons
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Pan speed label
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Pan speed slider
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia label
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Aim rotation speed label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Aim rotation speed slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Inertia label
@@ -270,26 +269,13 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume slider
             
-            // Zoom label - bright yellow for visibility
-            _zoomLabel = new Label
-            {
-                Text = $"Zoom: {_cameraZoom:F2}x",
-                TextColor = Color.Yellow,
-                GridColumn = 0,
-                GridRow = 0,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
-            };
-            grid.Widgets.Add(_zoomLabel);
-            
             // Speed label - bright green for visibility
             _speedLabel = new Label
             {
                 Text = $"Ship Speed: {(_playerShip?.MoveSpeed ?? 300f):F0}",
                 TextColor = Color.Lime,
                 GridColumn = 0,
-                GridRow = 1,
+                GridRow = 0,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -305,7 +291,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 2,
+                GridRow = 1,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -328,7 +314,7 @@ namespace Planet9.Scenes
                 Text = $"Ship Turn Rate: {(_playerShip?.RotationSpeed ?? 5f):F1}",
                 TextColor = Color.Cyan,
                 GridColumn = 0,
-                GridRow = 3,
+                GridRow = 2,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -344,7 +330,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 4,
+                GridRow = 3,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -361,45 +347,11 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_turnRateSlider);
             
-            // Camera speed label - bright orange for visibility
-            _cameraSpeedLabel = new Label
-            {
-                Text = $"Camera Speed: {CameraSpeed:F0}",
-                TextColor = Color.Orange,
-                GridColumn = 0,
-                GridRow = 5,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
-            };
-            grid.Widgets.Add(_cameraSpeedLabel);
-            
-            // Camera speed slider
-            _cameraSpeedSlider = new HorizontalSlider
-            {
-                Minimum = 50f,
-                Maximum = 1000f,
-                Value = CameraSpeed,
-                Width = 200,
-                Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 6,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
-            };
-            _cameraSpeedSlider.ValueChanged += (s, a) =>
-            {
-                CameraSpeed = _cameraSpeedSlider.Value;
-                _cameraSpeedLabel.Text = $"Camera Speed: {_cameraSpeedSlider.Value:F0}";
-            };
-            grid.Widgets.Add(_cameraSpeedSlider);
-            
             // Grid size controls container (label and checkbox in a horizontal layout)
             var gridSizeControlsContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 7,
+                GridRow = 4,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
@@ -432,7 +384,7 @@ namespace Planet9.Scenes
             var gridSizeButtonContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 8,
+                GridRow = 5,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 5,
@@ -480,81 +432,13 @@ namespace Planet9.Scenes
             
             grid.Widgets.Add(gridSizeButtonContainer);
             
-            // Pan speed label - bright yellow for visibility
-            _panSpeedLabel = new Label
-            {
-                Text = $"Cam to Player Speed: {_cameraPanSpeed:F0}",
-                TextColor = Color.Yellow,
-                GridColumn = 0,
-                GridRow = 9,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
-            };
-            grid.Widgets.Add(_panSpeedLabel);
-            
-            // Pan speed slider
-            _panSpeedSlider = new HorizontalSlider
-            {
-                Minimum = 200f,
-                Maximum = 2000f,
-                Value = _cameraPanSpeed,
-                Width = 200,
-                Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 10,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
-            };
-            _panSpeedSlider.ValueChanged += (s, a) =>
-            {
-                _cameraPanSpeed = _panSpeedSlider.Value;
-                _panSpeedLabel.Text = $"Cam to Player Speed: {_panSpeedSlider.Value:F0}";
-            };
-            grid.Widgets.Add(_panSpeedSlider);
-            
-            // Camera inertia label - bright cyan for visibility
-            _cameraInertiaLabel = new Label
-            {
-                Text = $"Camera Inertia: {_cameraInertia:F2}",
-                TextColor = Color.Cyan,
-                GridColumn = 0,
-                GridRow = 11,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
-            };
-            grid.Widgets.Add(_cameraInertiaLabel);
-            
-            // Camera inertia slider (0.0 = no inertia/instant stop, 0.995 = maximum inertia)
-            _cameraInertiaSlider = new HorizontalSlider
-            {
-                Minimum = 0f,
-                Maximum = 0.995f,
-                Value = _cameraInertia,
-                Width = 200,
-                Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 12,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
-            };
-            _cameraInertiaSlider.ValueChanged += (s, a) =>
-            {
-                _cameraInertia = _cameraInertiaSlider.Value;
-                _cameraInertiaLabel.Text = $"Camera Inertia: {_cameraInertiaSlider.Value:F2}";
-            };
-            grid.Widgets.Add(_cameraInertiaSlider);
-            
             // Aim rotation speed label - bright lime green for visibility
             _aimRotationSpeedLabel = new Label
             {
                 Text = $"Ship Idle Rotation Speed: {(_playerShip?.AimRotationSpeed ?? 5f):F1}",
                 TextColor = Color.Lime,
                 GridColumn = 0,
-                GridRow = 13,
+                GridRow = 6,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -570,7 +454,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 14,
+                GridRow = 7,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -593,7 +477,7 @@ namespace Planet9.Scenes
                 Text = $"Ship Inertia: {(_playerShip?.Inertia ?? 0.9f):F2}",
                 TextColor = new Color(255, 100, 255), // Purple/magenta
                 GridColumn = 0,
-                GridRow = 15,
+                GridRow = 8,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -609,7 +493,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 16,
+                GridRow = 9,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -632,7 +516,7 @@ namespace Planet9.Scenes
                 Text = $"Music Volume: {(_musicVolume * 100f):F0}%",
                 TextColor = new Color(100, 200, 255), // Light blue
                 GridColumn = 0,
-                GridRow = 17,
+                GridRow = 10,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -648,7 +532,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 18,
+                GridRow = 11,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -671,7 +555,7 @@ namespace Planet9.Scenes
                 Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%",
                 TextColor = new Color(255, 150, 100), // Orange
                 GridColumn = 0,
-                GridRow = 19,
+                GridRow = 12,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
@@ -687,7 +571,7 @@ namespace Planet9.Scenes
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
-                GridRow = 20,
+                GridRow = 13,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
@@ -704,6 +588,151 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_sfxVolumeSlider);
             
+            // Create Camera Settings panel
+            var cameraSettingsGrid = new Grid
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                ColumnSpacing = 0,
+                RowSpacing = 5
+            };
+            cameraSettingsGrid.ColumnsProportions.Add(new Proportion(ProportionType.Auto));
+            
+            // Define rows for camera settings
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Zoom label
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera speed label
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera speed slider
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Cam to Player Speed label
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Cam to Player Speed slider
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia label
+            cameraSettingsGrid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Camera inertia slider
+            
+            // Zoom label - bright yellow for visibility
+            _zoomLabel = new Label
+            {
+                Text = $"Zoom: {_cameraZoom:F2}x",
+                TextColor = Color.Yellow,
+                GridColumn = 0,
+                GridRow = 0,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            cameraSettingsGrid.Widgets.Add(_zoomLabel);
+            
+            // Camera speed label - bright orange for visibility
+            _cameraSpeedLabel = new Label
+            {
+                Text = $"Camera Speed: {CameraSpeed:F0}",
+                TextColor = Color.Orange,
+                GridColumn = 0,
+                GridRow = 1,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            cameraSettingsGrid.Widgets.Add(_cameraSpeedLabel);
+            
+            // Camera speed slider
+            _cameraSpeedSlider = new HorizontalSlider
+            {
+                Minimum = 50f,
+                Maximum = 1000f,
+                Value = CameraSpeed,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 2,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _cameraSpeedSlider.ValueChanged += (s, a) =>
+            {
+                CameraSpeed = _cameraSpeedSlider.Value;
+                _cameraSpeedLabel.Text = $"Camera Speed: {_cameraSpeedSlider.Value:F0}";
+            };
+            cameraSettingsGrid.Widgets.Add(_cameraSpeedSlider);
+            
+            // Cam to Player Speed label - bright yellow for visibility
+            _panSpeedLabel = new Label
+            {
+                Text = $"Cam to Player Speed: {_cameraPanSpeed:F0}",
+                TextColor = Color.Yellow,
+                GridColumn = 0,
+                GridRow = 3,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            cameraSettingsGrid.Widgets.Add(_panSpeedLabel);
+            
+            // Cam to Player Speed slider
+            _panSpeedSlider = new HorizontalSlider
+            {
+                Minimum = 200f,
+                Maximum = 2000f,
+                Value = _cameraPanSpeed,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 4,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _panSpeedSlider.ValueChanged += (s, a) =>
+            {
+                _cameraPanSpeed = _panSpeedSlider.Value;
+                _panSpeedLabel.Text = $"Cam to Player Speed: {_panSpeedSlider.Value:F0}";
+            };
+            cameraSettingsGrid.Widgets.Add(_panSpeedSlider);
+            
+            // Camera inertia label - bright cyan for visibility
+            _cameraInertiaLabel = new Label
+            {
+                Text = $"Camera Inertia: {_cameraInertia:F2}",
+                TextColor = Color.Cyan,
+                GridColumn = 0,
+                GridRow = 5,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
+            };
+            cameraSettingsGrid.Widgets.Add(_cameraInertiaLabel);
+            
+            // Camera inertia slider (0.0 = no inertia/instant stop, 0.995 = maximum inertia)
+            _cameraInertiaSlider = new HorizontalSlider
+            {
+                Minimum = 0f,
+                Maximum = 0.995f,
+                Value = _cameraInertia,
+                Width = 200,
+                Height = 10, // Half the default height
+                GridColumn = 0,
+                GridRow = 6,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
+            };
+            _cameraInertiaSlider.ValueChanged += (s, a) =>
+            {
+                _cameraInertia = _cameraInertiaSlider.Value;
+                _cameraInertiaLabel.Text = $"Camera Inertia: {_cameraInertiaSlider.Value:F2}";
+            };
+            cameraSettingsGrid.Widgets.Add(_cameraInertiaSlider);
+            
+            // Wrap camera settings grid in a panel
+            _cameraSettingsPanel = new Panel
+            {
+                Background = new Myra.Graphics2D.Brushes.SolidBrush(new Microsoft.Xna.Framework.Color(20, 20, 20, 220)), // Semi-transparent dark background
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0),
+                Margin = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // No margin needed, VerticalStackPanel handles spacing
+            };
+            _cameraSettingsPanel.Widgets.Add(cameraSettingsGrid);
+            
             // Wrap grid in a panel with background that covers all sliders
             var uiPanel = new Panel
             {
@@ -714,7 +743,39 @@ namespace Planet9.Scenes
             };
             uiPanel.Widgets.Add(grid);
             
-            _desktop.Root = uiPanel;
+            // Create a container panel to hold both UI panel and camera settings panel (vertical layout)
+            var containerPanel = new VerticalStackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10, // Padding between panels
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            containerPanel.Widgets.Add(uiPanel);
+            containerPanel.Widgets.Add(_cameraSettingsPanel);
+            
+            // Create mouse coordinate label in a separate desktop for absolute positioning
+            _coordinateDesktop = new Desktop();
+            var coordinatePanel = new Panel
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            _mouseCoordinateLabel = new Label
+            {
+                Text = "(0, 0)",
+                TextColor = Color.Yellow,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0),
+                Margin = new Myra.Graphics2D.Thickness(0, 0, 0, 0),
+                Visible = false
+            };
+            coordinatePanel.Widgets.Add(_mouseCoordinateLabel);
+            _coordinateDesktop.Root = coordinatePanel;
+            
+            _desktop.Root = containerPanel;
             
             // Create save button in bottom right as separate desktop
             _saveButtonDesktop = new Desktop();
@@ -1096,6 +1157,45 @@ namespace Planet9.Scenes
             var keyboardState = Keyboard.GetState();
             var mouseState = Mouse.GetState();
             
+            // If game is paused (F12 grid mode), only update UI and input, skip game logic
+            if (_gamePaused)
+            {
+                // Update Myra input for UI interaction
+                _desktop?.UpdateInput();
+                _saveButtonDesktop?.UpdateInput();
+                
+                // Update mouse coordinates when grid is visible
+                if (_uiGridVisible && _mouseCoordinateLabel != null)
+                {
+                    var mouseX = mouseState.X;
+                    var mouseY = mouseState.Y;
+                    
+                    // Calculate snapped grid point (for display, not actual cursor position)
+                    int snappedX = (mouseX / UIGridSize) * UIGridSize;
+                    int snappedY = (mouseY / UIGridSize) * UIGridSize;
+                    
+                    // Update coordinate label position to follow mouse (above cursor)
+                    _mouseCoordinateLabel.Text = $"({snappedX}, {snappedY})";
+                    _mouseCoordinateLabel.Margin = new Myra.Graphics2D.Thickness(mouseX, mouseY - 25, 0, 0); // 25px above cursor
+                }
+                
+                // Toggle UI grid overlay and pause game with F12
+                if (keyboardState.IsKeyDown(Keys.F12) && !_previousKeyboardState.IsKeyDown(Keys.F12))
+                {
+                    _uiGridVisible = !_uiGridVisible;
+                    _gamePaused = _uiGridVisible; // Pause when grid is shown, unpause when hidden
+                    // Show/hide coordinate label
+                    if (_mouseCoordinateLabel != null)
+                    {
+                        _mouseCoordinateLabel.Visible = _uiGridVisible;
+                    }
+                }
+                
+                _previousKeyboardState = keyboardState;
+                _previousMouseState = mouseState;
+                return; // Skip all game logic when paused
+            }
+            
             // Toggle preview with P key
             if (keyboardState.IsKeyDown(Keys.P) && !_previousKeyboardState.IsKeyDown(Keys.P))
             {
@@ -1404,6 +1504,19 @@ namespace Planet9.Scenes
                     _gridVisibleCheckBox.IsChecked = _gridVisible;
                 }
             }
+            
+            // Toggle UI grid overlay and pause game with F12
+            if (keyboardState.IsKeyDown(Keys.F12) && !_previousKeyboardState.IsKeyDown(Keys.F12))
+            {
+                _uiGridVisible = !_uiGridVisible;
+                _gamePaused = _uiGridVisible; // Pause when grid is shown, unpause when hidden
+                // Show/hide coordinate label
+                if (_mouseCoordinateLabel != null)
+                {
+                    _mouseCoordinateLabel.Visible = _uiGridVisible;
+                }
+            }
+            
             
             // Camera zoom with mouse wheel
             int scrollDelta = mouseState.ScrollWheelValue - _previousMouseState.ScrollWheelValue;
@@ -1989,9 +2102,38 @@ namespace Planet9.Scenes
             // Draw minimap in upper right corner
             DrawMinimap(spriteBatch);
             
+            // Draw UI grid overlay if enabled (draw before UI so grid appears under UI)
+            if (_uiGridVisible)
+            {
+                DrawUIGrid(spriteBatch);
+            }
+            
             // Draw UI overlay (zoom level) on top
             _desktop?.Render();
             _saveButtonDesktop?.Render();
+            
+            // Update coordinate label position in Draw to ensure it's always updated
+            if (_uiGridVisible && _mouseCoordinateLabel != null)
+            {
+                var mouseState = Mouse.GetState();
+                var mouseX = mouseState.X;
+                var mouseY = mouseState.Y;
+                
+                // Calculate snapped grid point
+                int snappedX = (mouseX / UIGridSize) * UIGridSize;
+                int snappedY = (mouseY / UIGridSize) * UIGridSize;
+                
+                // Update coordinate label position to follow mouse (above cursor)
+                _mouseCoordinateLabel.Text = $"({snappedX}, {snappedY})";
+                _mouseCoordinateLabel.Margin = new Myra.Graphics2D.Thickness(mouseX, mouseY - 25, 0, 0); // 25px above cursor
+                _mouseCoordinateLabel.Visible = true;
+                
+                // Render coordinate desktop after main UI so it appears on top
+                if (_coordinateDesktop != null)
+                {
+                    _coordinateDesktop.Render();
+                }
+            }
             
             // Draw preview screen if active
             Texture2D? shipTexture = _previewShipIndex == 0 ? _previewShip1Texture : _previewShip2Texture;
@@ -2195,6 +2337,63 @@ namespace Planet9.Scenes
             {
                 System.Console.WriteLine($"Failed to load {className} settings: {ex.Message}");
             }
+        }
+        
+        private void DrawUIGrid(SpriteBatch spriteBatch)
+        {
+            if (_gridPixelTexture == null || spriteBatch == null) return;
+            
+            spriteBatch.Begin(
+                SpriteSortMode.Deferred,
+                BlendState.AlphaBlend,
+                SamplerState.PointClamp,
+                DepthStencilState.None,
+                RasterizerState.CullNone
+            );
+            
+            var viewport = GraphicsDevice.Viewport;
+            var mouseState = Mouse.GetState();
+            var gridColor = new Color(255, 255, 255, 50); // 50% less opaque (was 100, now 50)
+            
+            // Draw vertical lines
+            for (int x = 0; x <= viewport.Width; x += UIGridSize)
+            {
+                spriteBatch.Draw(
+                    _gridPixelTexture,
+                    new Rectangle(x, 0, 1, viewport.Height),
+                    gridColor
+                );
+            }
+            
+            // Draw horizontal lines
+            for (int y = 0; y <= viewport.Height; y += UIGridSize)
+            {
+                spriteBatch.Draw(
+                    _gridPixelTexture,
+                    new Rectangle(0, y, viewport.Width, 1),
+                    gridColor
+                );
+            }
+            
+            // Highlight the grid point under the mouse cursor with a 3x3 red pixel
+            if (mouseState.X >= 0 && mouseState.X < viewport.Width && 
+                mouseState.Y >= 0 && mouseState.Y < viewport.Height)
+            {
+                int snappedX = (mouseState.X / UIGridSize) * UIGridSize;
+                int snappedY = (mouseState.Y / UIGridSize) * UIGridSize;
+                
+                var highlightColor = Color.Red; // Red pixel
+                
+                // Draw a 3x3 pixel square at the grid point (centered on grid intersection)
+                int offset = 1; // Offset to center the 3x3 square on the grid point
+                spriteBatch.Draw(
+                    _gridPixelTexture,
+                    new Rectangle(snappedX - offset, snappedY - offset, 3, 3),
+                    highlightColor
+                );
+            }
+            
+            spriteBatch.End();
         }
         
         private void DrawMinimap(SpriteBatch spriteBatch)
