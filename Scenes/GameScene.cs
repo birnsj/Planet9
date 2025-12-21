@@ -38,9 +38,6 @@ namespace Planet9.Scenes
         // Player ship
         private PlayerShip? _playerShip;
         private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = FriendlyShip
-        private Label? _shipClassLabel;
-        private TextButton? _shipClassLeftButton;
-        private TextButton? _shipClassRightButton;
         
         // Friendly ships
         private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
@@ -272,8 +269,6 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume slider
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship class label
-            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship class buttons
             
             // Zoom label - bright yellow for visibility
             _zoomLabel = new Label
@@ -291,7 +286,7 @@ namespace Planet9.Scenes
             // Speed label - bright green for visibility
             _speedLabel = new Label
             {
-                Text = $"Speed: {(_playerShip?.MoveSpeed ?? 300f):F0}",
+                Text = $"Ship Speed: {(_playerShip?.MoveSpeed ?? 300f):F0}",
                 TextColor = Color.Lime,
                 GridColumn = 0,
                 GridRow = 1,
@@ -308,6 +303,7 @@ namespace Planet9.Scenes
                 Maximum = 1000f,
                 Value = _playerShip?.MoveSpeed ?? 300f,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 2,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -319,7 +315,7 @@ namespace Planet9.Scenes
                 if (_playerShip != null)
                 {
                     _playerShip.MoveSpeed = _speedSlider.Value;
-                    _speedLabel.Text = $"Speed: {_speedSlider.Value:F0}";
+                    _speedLabel.Text = $"Ship Speed: {_speedSlider.Value:F0}";
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -329,7 +325,7 @@ namespace Planet9.Scenes
             // Turn rate label - bright cyan for visibility
             _turnRateLabel = new Label
             {
-                Text = $"Turn Rate: {(_playerShip?.RotationSpeed ?? 5f):F1}",
+                Text = $"Ship Turn Rate: {(_playerShip?.RotationSpeed ?? 5f):F1}",
                 TextColor = Color.Cyan,
                 GridColumn = 0,
                 GridRow = 3,
@@ -346,6 +342,7 @@ namespace Planet9.Scenes
                 Maximum = 20f,
                 Value = _playerShip?.RotationSpeed ?? 5f,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 4,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -357,7 +354,7 @@ namespace Planet9.Scenes
                 if (_playerShip != null)
                 {
                     _playerShip.RotationSpeed = _turnRateSlider.Value;
-                    _turnRateLabel.Text = $"Turn Rate: {_turnRateSlider.Value:F1}";
+                    _turnRateLabel.Text = $"Ship Turn Rate: {_turnRateSlider.Value:F1}";
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -384,6 +381,7 @@ namespace Planet9.Scenes
                 Maximum = 1000f,
                 Value = CameraSpeed,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 6,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -485,7 +483,7 @@ namespace Planet9.Scenes
             // Pan speed label - bright yellow for visibility
             _panSpeedLabel = new Label
             {
-                Text = $"Pan Speed: {_cameraPanSpeed:F0}",
+                Text = $"Cam to Player Speed: {_cameraPanSpeed:F0}",
                 TextColor = Color.Yellow,
                 GridColumn = 0,
                 GridRow = 9,
@@ -502,6 +500,7 @@ namespace Planet9.Scenes
                 Maximum = 2000f,
                 Value = _cameraPanSpeed,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 10,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -511,7 +510,7 @@ namespace Planet9.Scenes
             _panSpeedSlider.ValueChanged += (s, a) =>
             {
                 _cameraPanSpeed = _panSpeedSlider.Value;
-                _panSpeedLabel.Text = $"Pan Speed: {_panSpeedSlider.Value:F0}";
+                _panSpeedLabel.Text = $"Cam to Player Speed: {_panSpeedSlider.Value:F0}";
             };
             grid.Widgets.Add(_panSpeedSlider);
             
@@ -535,6 +534,7 @@ namespace Planet9.Scenes
                 Maximum = 0.995f,
                 Value = _cameraInertia,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 12,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -551,7 +551,7 @@ namespace Planet9.Scenes
             // Aim rotation speed label - bright lime green for visibility
             _aimRotationSpeedLabel = new Label
             {
-                Text = $"Aim Rotation Speed: {(_playerShip?.AimRotationSpeed ?? 5f):F1}",
+                Text = $"Ship Idle Rotation Speed: {(_playerShip?.AimRotationSpeed ?? 5f):F1}",
                 TextColor = Color.Lime,
                 GridColumn = 0,
                 GridRow = 13,
@@ -568,6 +568,7 @@ namespace Planet9.Scenes
                 Maximum = 20f,
                 Value = _playerShip?.AimRotationSpeed ?? 5f,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 14,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -579,7 +580,7 @@ namespace Planet9.Scenes
                 if (_playerShip != null)
                 {
                     _playerShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
-                    _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
+                    _aimRotationSpeedLabel.Text = $"Ship Idle Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -589,7 +590,7 @@ namespace Planet9.Scenes
             // Inertia label - bright purple for visibility
             _inertiaLabel = new Label
             {
-                Text = $"Inertia: {(_playerShip?.Inertia ?? 0.9f):F2}",
+                Text = $"Ship Inertia: {(_playerShip?.Inertia ?? 0.9f):F2}",
                 TextColor = new Color(255, 100, 255), // Purple/magenta
                 GridColumn = 0,
                 GridRow = 15,
@@ -606,6 +607,7 @@ namespace Planet9.Scenes
                 Maximum = 0.995f,
                 Value = _playerShip?.Inertia ?? 0.9f,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 16,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -617,7 +619,7 @@ namespace Planet9.Scenes
                 if (_playerShip != null)
                 {
                     _playerShip.Inertia = _inertiaSlider.Value;
-                    _inertiaLabel.Text = $"Inertia: {_inertiaSlider.Value:F2}";
+                    _inertiaLabel.Text = $"Ship Inertia: {_inertiaSlider.Value:F2}";
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -644,6 +646,7 @@ namespace Planet9.Scenes
                 Maximum = 1f,
                 Value = _musicVolume,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 18,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -682,6 +685,7 @@ namespace Planet9.Scenes
                 Maximum = 1f,
                 Value = _sfxVolume,
                 Width = 200,
+                Height = 10, // Half the default height
                 GridColumn = 0,
                 GridRow = 20,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -699,52 +703,6 @@ namespace Planet9.Scenes
                 }
             };
             grid.Widgets.Add(_sfxVolumeSlider);
-            
-            // Ship class label
-            _shipClassLabel = new Label
-            {
-                Text = "Ship Class: PlayerShip",
-                TextColor = new Color(255, 200, 100), // Orange
-                GridColumn = 0,
-                GridRow = 21,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 0, 0)
-            };
-            grid.Widgets.Add(_shipClassLabel);
-            
-            // Ship class buttons container
-            var shipClassButtonContainer = new HorizontalStackPanel
-            {
-                GridColumn = 0,
-                GridRow = 22,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Spacing = 5,
-                Padding = new Myra.Graphics2D.Thickness(10, 5, 0, 0)
-            };
-            
-            // Left arrow button (switch to PlayerShip)
-            _shipClassLeftButton = new TextButton
-            {
-                Text = "← PlayerShip",
-                Width = 120,
-                Height = 30
-            };
-            _shipClassLeftButton.Click += (s, a) => SwitchShipClass(0);
-            shipClassButtonContainer.Widgets.Add(_shipClassLeftButton);
-            
-            // Right arrow button (switch to FriendlyShip)
-            _shipClassRightButton = new TextButton
-            {
-                Text = "FriendlyShip →",
-                Width = 120,
-                Height = 30
-            };
-            _shipClassRightButton.Click += (s, a) => SwitchShipClass(1);
-            shipClassButtonContainer.Widgets.Add(_shipClassRightButton);
-            
-            grid.Widgets.Add(shipClassButtonContainer);
             
             // Wrap grid in a panel with background that covers all sliders
             var uiPanel = new Panel
@@ -907,12 +865,6 @@ namespace Planet9.Scenes
             // Load current ship class settings
             LoadCurrentShipSettings();
             
-            // Update ship class label
-            if (_shipClassLabel != null)
-            {
-                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip")}";
-            }
-            
             _previousMouseState = Mouse.GetState();
             _previousKeyboardState = Keyboard.GetState();
         }
@@ -1008,7 +960,7 @@ namespace Planet9.Scenes
                         }
                         if (_panSpeedLabel != null)
                         {
-                            _panSpeedLabel.Text = $"Pan Speed: {_cameraPanSpeed:F0}";
+                            _panSpeedLabel.Text = $"Cam to Player Speed: {_cameraPanSpeed:F0}";
                         }
                     }
                     
@@ -2144,12 +2096,6 @@ namespace Planet9.Scenes
             }
             _playerShip.Position = mapCenter;
             
-            // Update UI label
-            if (_shipClassLabel != null)
-            {
-                _shipClassLabel.Text = $"Ship Class: {(_currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip")}";
-            }
-            
             // Sync preview index if preview is active
             if (_isPreviewActive)
             {
@@ -2208,7 +2154,7 @@ namespace Planet9.Scenes
                         var shipSpeed = shipSpeedElement.GetSingle();
                         _playerShip.MoveSpeed = shipSpeed;
                         if (_speedSlider != null) _speedSlider.Value = shipSpeed;
-                        if (_speedLabel != null) _speedLabel.Text = $"Speed: {shipSpeed:F0}";
+                        if (_speedLabel != null) _speedLabel.Text = $"Ship Speed: {shipSpeed:F0}";
                     }
                     
                     // Load turn rate
@@ -2217,7 +2163,7 @@ namespace Planet9.Scenes
                         var turnRate = turnRateElement.GetSingle();
                         _playerShip.RotationSpeed = turnRate;
                         if (_turnRateSlider != null) _turnRateSlider.Value = turnRate;
-                        if (_turnRateLabel != null) _turnRateLabel.Text = $"Turn Rate: {turnRate:F1}";
+                        if (_turnRateLabel != null) _turnRateLabel.Text = $"Ship Turn Rate: {turnRate:F1}";
                     }
                     
                     // Load inertia
@@ -2226,7 +2172,7 @@ namespace Planet9.Scenes
                         var inertia = inertiaElement.GetSingle();
                         _playerShip.Inertia = inertia;
                         if (_inertiaSlider != null) _inertiaSlider.Value = inertia;
-                        if (_inertiaLabel != null) _inertiaLabel.Text = $"Inertia: {inertia:F2}";
+                        if (_inertiaLabel != null) _inertiaLabel.Text = $"Ship Inertia: {inertia:F2}";
                     }
                     
                     // Load aim rotation speed
@@ -2235,7 +2181,7 @@ namespace Planet9.Scenes
                         var aimRotationSpeed = aimRotationSpeedElement.GetSingle();
                         _playerShip.AimRotationSpeed = aimRotationSpeed;
                         if (_aimRotationSpeedSlider != null) _aimRotationSpeedSlider.Value = aimRotationSpeed;
-                        if (_aimRotationSpeedLabel != null) _aimRotationSpeedLabel.Text = $"Aim Rotation Speed: {aimRotationSpeed:F1}";
+                        if (_aimRotationSpeedLabel != null) _aimRotationSpeedLabel.Text = $"Ship Idle Rotation Speed: {aimRotationSpeed:F1}";
                     }
                     
                     System.Console.WriteLine($"Loaded {className} settings from: {filePath}");
