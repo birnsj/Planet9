@@ -167,31 +167,31 @@ namespace Planet9.Entities
                         Position += _velocity * deltaTime;
                     }
                     
-                    // Always face the direction of actual movement (velocity direction)
-                    if (_velocity.LengthSquared() > 0.1f) // Only rotate if actually moving
+                    // Smoothly rotate to face the direction of movement using shortest rotation path
+                    if (direction.LengthSquared() > 0.1f) // Only rotate if there's a direction
                     {
-                        // Calculate rotation to face velocity direction
-                        float targetRotation = (float)Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
+                        // Calculate rotation to face target direction (not velocity, but desired direction)
+                        float targetRotation = (float)Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
                         
                         // Calculate shortest rotation path
                         float angleDiff = targetRotation - Rotation;
                         
-                        // Normalize angle difference to [-Pi, Pi]
+                        // Normalize angle difference to [-Pi, Pi] to get shortest path
                         while (angleDiff > MathHelper.Pi)
                             angleDiff -= MathHelper.TwoPi;
                         while (angleDiff < -MathHelper.Pi)
                             angleDiff += MathHelper.TwoPi;
                         
-                        // Always rotate to face movement direction (no minimum angle threshold)
-                        float rotationDelta = RotationSpeed * deltaTime * 0.8f; // 20% reduction for smoother turning
-                        
-                        // Rotate towards target
+                        // Smoothly rotate towards target using rotation speed
+                        float rotationDelta = RotationSpeed * deltaTime;
                         if (Math.Abs(angleDiff) < rotationDelta)
                         {
+                            // Close enough, snap to target
                             Rotation = targetRotation;
                         }
                         else
                         {
+                            // Rotate towards target using shortest path
                             Rotation += Math.Sign(angleDiff) * rotationDelta;
                         }
                     }
@@ -212,22 +212,18 @@ namespace Planet9.Entities
                 // Apply velocity
                 Position += _velocity * deltaTime;
                 
-                // Face velocity direction while coasting
+                // Smoothly face velocity direction while coasting
                 if (_velocity.LengthSquared() > 0.1f)
                 {
                     float targetRotation = (float)Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
                     float angleDiff = targetRotation - Rotation;
                     while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
                     while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
-                    float rotationDelta = RotationSpeed * deltaTime * 0.8f;
+                    float rotationDelta = RotationSpeed * deltaTime;
                     if (Math.Abs(angleDiff) < rotationDelta)
-                    {
                         Rotation = targetRotation;
-                    }
                     else
-                    {
                         Rotation += Math.Sign(angleDiff) * rotationDelta;
-                    }
                 }
                 
                 // Stop if velocity is very small
