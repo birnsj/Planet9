@@ -60,14 +60,25 @@ namespace Planet9.Entities
                     // Update position
                     Position += _velocity * deltaTime;
                     
-                    // Smoothly rotate to face the direction of movement using shortest rotation path (unless in idle behavior)
-                    if (!IsIdle && direction.LengthSquared() > 0.1f) // Only rotate if there's a direction
+                    // Smoothly rotate to face the direction of movement (velocity direction) using shortest rotation path (unless in idle behavior)
+                    // Always face the direction we're actually moving, not the target direction
+                    if (!IsIdle && _velocity.LengthSquared() > 1f) // Only rotate if we have significant velocity
                     {
-                        // Calculate rotation to face target direction (not velocity, but desired direction)
-                        float targetRotation = (float)System.Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
+                        // Calculate rotation to face velocity direction (the direction we're actually moving)
+                        float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
                         
-                        // Update smooth rotation target
-                        _targetRotation = targetRotation;
+                        // Smooth the target rotation itself to prevent sudden changes
+                        float targetAngleDiff = targetRotation - _targetRotation;
+                        while (targetAngleDiff > MathHelper.Pi) targetAngleDiff -= MathHelper.TwoPi;
+                        while (targetAngleDiff < -MathHelper.Pi) targetAngleDiff += MathHelper.TwoPi;
+                        
+                        // Gradually update target rotation (smooth out sudden direction changes)
+                        float targetRotationSmoothing = 0.3f; // How quickly target rotation updates (0-1, lower = smoother)
+                        _targetRotation += targetAngleDiff * targetRotationSmoothing;
+                        
+                        // Normalize target rotation
+                        while (_targetRotation > MathHelper.TwoPi) _targetRotation -= MathHelper.TwoPi;
+                        while (_targetRotation < 0) _targetRotation += MathHelper.TwoPi;
                         
                         // Calculate shortest rotation path
                         float angleDiff = _targetRotation - Rotation;
@@ -79,7 +90,35 @@ namespace Planet9.Entities
                             angleDiff += MathHelper.TwoPi;
                         
                         // Smoothly rotate towards target using rotation speed with interpolation
+                        // Use adaptive rotation speed based on angle difference for smoother turning
                         float rotationDelta = RotationSpeed * deltaTime;
+                        
+                        // Scale rotation speed based on angle - much slower for large angles (sharp turns)
+                        // For sharp turns (close to 180 degrees), reduce speed significantly
+                        float absAngleDiff = System.Math.Abs(angleDiff);
+                        float angleScale;
+                        if (absAngleDiff > MathHelper.Pi * 0.75f) // Very sharp turn (135+ degrees)
+                        {
+                            // Very slow for sharp turns in place
+                            angleScale = 0.3f; // 30% of normal speed
+                        }
+                        else if (absAngleDiff > MathHelper.Pi * 0.5f) // Sharp turn (90+ degrees)
+                        {
+                            // Slow for sharp turns
+                            angleScale = 0.5f; // 50% of normal speed
+                        }
+                        else if (absAngleDiff > MathHelper.Pi * 0.25f) // Moderate turn (45+ degrees)
+                        {
+                            // Slightly reduced for moderate turns
+                            angleScale = 0.75f; // 75% of normal speed
+                        }
+                        else
+                        {
+                            // Normal speed for small turns
+                            angleScale = 1f;
+                        }
+                        rotationDelta *= angleScale;
+                        
                         if (System.Math.Abs(angleDiff) < rotationDelta)
                         {
                             // Close enough, snap to target
@@ -88,8 +127,14 @@ namespace Planet9.Entities
                         else
                         {
                             // Smooth interpolation for smoother turning
-                            float lerpFactor = MathHelper.Clamp(rotationDelta / System.Math.Abs(angleDiff), 0f, 1f);
-                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpFactor);
+                            // Use slower lerp for sharp turns
+                            float baseLerpFactor = MathHelper.Clamp(rotationDelta / absAngleDiff, 0.1f, 0.5f);
+                            // Further reduce lerp speed for sharp turns
+                            if (absAngleDiff > MathHelper.Pi * 0.5f)
+                            {
+                                baseLerpFactor *= 0.6f; // Even slower for sharp turns
+                            }
+                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, baseLerpFactor);
                         }
                     }
                 }
@@ -132,25 +177,68 @@ namespace Planet9.Entities
                     _velocity *= Inertia;
                     Position += _velocity * deltaTime;
                     
-                    // Do not rotate when idle - ships should maintain their current rotation
-                    // Only rotate if not idle and has significant velocity
-                    if (!IsIdle && _velocity.LengthSquared() > 100f) // Only rotate if moving with significant speed
+                    // Always rotate to face velocity direction when moving (even when coasting)
+                    // Only rotate if not idle and has any velocity
+                    if (!IsIdle && _velocity.LengthSquared() > 1f) // Rotate if we have any velocity
                     {
                         float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
-                        _targetRotation = targetRotation;
+                        
+                        // Smooth the target rotation itself to prevent sudden changes
+                        float targetAngleDiff = targetRotation - _targetRotation;
+                        while (targetAngleDiff > MathHelper.Pi) targetAngleDiff -= MathHelper.TwoPi;
+                        while (targetAngleDiff < -MathHelper.Pi) targetAngleDiff += MathHelper.TwoPi;
+                        
+                        // Gradually update target rotation (smooth out sudden direction changes)
+                        float targetRotationSmoothing = 0.3f; // How quickly target rotation updates (0-1, lower = smoother)
+                        _targetRotation += targetAngleDiff * targetRotationSmoothing;
+                        
+                        // Normalize target rotation
+                        while (_targetRotation > MathHelper.TwoPi) _targetRotation -= MathHelper.TwoPi;
+                        while (_targetRotation < 0) _targetRotation += MathHelper.TwoPi;
                         
                         float angleDiff = _targetRotation - Rotation;
                         while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
                         while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
                         
+                        // Use adaptive rotation speed - much slower for sharp turns
+                        float absAngleDiff = System.Math.Abs(angleDiff);
                         float rotationDelta = RotationSpeed * deltaTime;
-                        if (System.Math.Abs(angleDiff) < rotationDelta)
+                        float angleScale;
+                        if (absAngleDiff > MathHelper.Pi * 0.75f) // Very sharp turn (135+ degrees)
+                        {
+                            // Very slow for sharp turns in place
+                            angleScale = 0.3f; // 30% of normal speed
+                        }
+                        else if (absAngleDiff > MathHelper.Pi * 0.5f) // Sharp turn (90+ degrees)
+                        {
+                            // Slow for sharp turns
+                            angleScale = 0.5f; // 50% of normal speed
+                        }
+                        else if (absAngleDiff > MathHelper.Pi * 0.25f) // Moderate turn (45+ degrees)
+                        {
+                            // Slightly reduced for moderate turns
+                            angleScale = 0.75f; // 75% of normal speed
+                        }
+                        else
+                        {
+                            // Normal speed for small turns
+                            angleScale = 1f;
+                        }
+                        rotationDelta *= angleScale;
+                        
+                        if (absAngleDiff < rotationDelta)
                             Rotation = _targetRotation;
                         else
                         {
                             // Smooth interpolation for smoother turning
-                            float lerpFactor = MathHelper.Clamp(rotationDelta / System.Math.Abs(angleDiff), 0f, 1f);
-                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpFactor);
+                            // Use slower lerp for sharp turns
+                            float baseLerpFactor = MathHelper.Clamp(rotationDelta / absAngleDiff, 0.1f, 0.5f);
+                            // Further reduce lerp speed for sharp turns
+                            if (absAngleDiff > MathHelper.Pi * 0.5f)
+                            {
+                                baseLerpFactor *= 0.6f; // Even slower for sharp turns
+                            }
+                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, baseLerpFactor);
                         }
                     }
                 }

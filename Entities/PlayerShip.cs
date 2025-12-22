@@ -18,6 +18,8 @@ namespace Planet9.Entities
         public float Inertia { get; set; } = 0.9f; // Inertia/damping factor (0-1, higher = more inertia)
         public float Drift { get; set; } = 0f; // Drift amount when idle (0 = no drift, higher = more random direction drift)
         public float AvoidanceDetectionRange { get; set; } = 300f; // Avoidance detection range for this ship
+        public float LookAheadDistance { get; set; } = 1.5f; // Look-ahead distance multiplier (multiplied by MoveSpeed for actual distance)
+        public bool LookAheadVisible { get; set; } = false; // Whether to show debug line for look-ahead target
         protected bool _isMoving = false;
         protected Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
         protected Vector2? _aimTarget = null; // Target position to aim at when not moving

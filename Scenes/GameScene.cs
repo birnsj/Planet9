@@ -29,6 +29,8 @@ namespace Planet9.Scenes
         private int _gridSize = 128; // 128x128 grid cells (can be changed via slider)
         private bool _gridVisible = false; // Grid visibility toggle (default off)
         private bool _uiGridVisible = false; // Myra UI grid overlay visibility toggle (default off)
+        private bool _minimapVisible = true; // Minimap visibility toggle (default on)
+        private bool _pathfindingGridVisible = false; // A* pathfinding grid visibility toggle (default off)
         private bool _gamePaused = false; // Game pause state (toggled with F12)
         private const int UIGridSize = 10; // UI grid cell size in pixels
         private const float MapSize = 8192f; // Total map size
@@ -71,6 +73,7 @@ namespace Planet9.Scenes
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipClosestDistanceToTarget = new System.Collections.Generic.Dictionary<FriendlyShip, float>(); // Track closest distance reached to target
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipNoProgressTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>(); // Timer for how long ship hasn't made progress
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>(); // Track last target to detect target changes
+        private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLookAheadTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>(); // Store look-ahead target for debug line drawing
         
         // Behavior duration ranges (in seconds) - increased for longer behavior changes
         private const float IdleMinDuration = 8f;
@@ -118,6 +121,9 @@ namespace Planet9.Scenes
         private HorizontalSlider? _shipIdleRateSlider;
         private Label? _shipIdleRateLabel;
         private float _shipIdleRate = 0.3f; // Default: 30% chance to idle (0 = always moving, 1 = always idle)
+        private HorizontalSlider? _lookAheadSlider;
+        private Label? _lookAheadLabel;
+        private CheckBox? _lookAheadVisibleCheckBox;
         private TextButton? _saveButton;
         private Label? _saveConfirmationLabel;
         private float _saveConfirmationTimer = 0f;
@@ -167,6 +173,7 @@ namespace Planet9.Scenes
         private Texture2D? _previewShip1Texture;
         private Texture2D? _previewShip2Texture;
         private bool _uiVisible = true; // Track UI visibility (toggled with U key)
+        private bool _behaviorTextVisible = true; // Track behavior text visibility (toggled with U key)
 
         public GameScene(Game game) : base(game)
         {
@@ -275,6 +282,8 @@ namespace Planet9.Scenes
             float friendlyAimRotationSpeed = 3f; // Reduced for smoother turning
             float friendlyDrift = 0f; // Default no drift
             float friendlyAvoidanceRange = 300f; // Default avoidance range
+            float friendlyLookAheadDistance = 1.5f; // Default look-ahead multiplier
+            bool friendlyLookAheadVisible = false; // Default look-ahead visibility
             
             try
             {
@@ -308,6 +317,14 @@ namespace Planet9.Scenes
                     {
                         friendlyAvoidanceRange = avoidanceRangeElement.GetSingle();
                     }
+                    if (settings.TryGetProperty("LookAheadDistance", out var lookAheadDistanceElement))
+                    {
+                        friendlyLookAheadDistance = lookAheadDistanceElement.GetSingle();
+                    }
+                    if (settings.TryGetProperty("LookAheadVisible", out var lookAheadVisibleElement))
+                    {
+                        friendlyLookAheadVisible = lookAheadVisibleElement.GetBoolean();
+                    }
                 }
             }
             catch (System.Exception ex)
@@ -338,6 +355,8 @@ namespace Planet9.Scenes
                 friendlyShip.AimRotationSpeed = friendlyAimRotationSpeed;
                 friendlyShip.Drift = friendlyDrift; // Apply drift setting
                 friendlyShip.AvoidanceDetectionRange = friendlyAvoidanceRange; // Apply avoidance range setting
+                friendlyShip.LookAheadDistance = friendlyLookAheadDistance; // Apply look-ahead distance setting
+                friendlyShip.LookAheadVisible = friendlyLookAheadVisible; // Apply look-ahead visibility setting
                 
                 _friendlyShips.Add(friendlyShip);
             }
@@ -397,6 +416,8 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Avoidance range slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship Idle Rate label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship Idle Rate slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Look-ahead label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Look-ahead slider and checkbox
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Enemy Path checkbox
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Enemy Target Path checkbox
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume label
@@ -437,6 +458,16 @@ namespace Planet9.Scenes
                 {
                     _playerShip.MoveSpeed = _speedSlider.Value;
                     _speedLabel.Text = $"Ship Speed: {_speedSlider.Value:F0}";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.MoveSpeed = _speedSlider.Value;
+                        }
+                    }
+                    
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -476,6 +507,16 @@ namespace Planet9.Scenes
                 {
                     _playerShip.RotationSpeed = _turnRateSlider.Value;
                     _turnRateLabel.Text = $"Ship Turn Rate: {_turnRateSlider.Value:F1}";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.RotationSpeed = _turnRateSlider.Value;
+                        }
+                    }
+                    
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -510,6 +551,7 @@ namespace Planet9.Scenes
             _gridVisibleCheckBox.Click += (s, a) =>
             {
                 _gridVisible = _gridVisibleCheckBox.IsChecked;
+                SavePanelSettings(); // Auto-save panel settings
             };
             gridSizeControlsContainer.Widgets.Add(_gridVisibleCheckBox);
             
@@ -527,7 +569,7 @@ namespace Planet9.Scenes
             };
             
             // Grid size values array
-            int[] gridSizeValues = { 64, 128, 256, 512 };
+            int[] gridSizeValues = { 64, 128, 256, 512, 1024 };
             
             // Left arrow button (decrease)
             _gridSizeLeftButton = new TextButton
@@ -600,6 +642,16 @@ namespace Planet9.Scenes
                 {
                     _playerShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
                     _aimRotationSpeedLabel.Text = $"Ship Idle Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
+                        }
+                    }
+                    
                     // Auto-save when slider changes
                     SaveCurrentShipSettings();
                 }
@@ -775,6 +827,7 @@ namespace Planet9.Scenes
             _avoidanceRangeVisibleCheckBox.Click += (s, a) =>
             {
                 _avoidanceRangeVisible = _avoidanceRangeVisibleCheckBox.IsChecked;
+                SavePanelSettings(); // Auto-save panel settings
             };
             avoidanceRangeContainer.Widgets.Add(_avoidanceRangeVisibleCheckBox);
             
@@ -816,13 +869,94 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_shipIdleRateSlider);
             
+            // Look-ahead label
+            _lookAheadLabel = new Label
+            {
+                Text = $"Look-Ahead Distance: {(_playerShip?.LookAheadDistance ?? 1.5f):F2}x",
+                TextColor = new Color(255, 200, 100), // Orange-yellow
+                GridColumn = 0,
+                GridRow = 16,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            grid.Widgets.Add(_lookAheadLabel);
+            
+            // Look-ahead slider and checkbox container
+            var lookAheadContainer = new HorizontalStackPanel
+            {
+                GridColumn = 0,
+                GridRow = 17,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10
+            };
+            
+            // Look-ahead slider (0.5x to 5.0x multiplier)
+            _lookAheadSlider = new HorizontalSlider
+            {
+                Minimum = 0.5f,
+                Maximum = 5.0f,
+                Value = _playerShip?.LookAheadDistance ?? 1.5f,
+                Width = 200,
+                Height = 10,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            _lookAheadSlider.ValueChanged += (s, a) =>
+            {
+                if (_playerShip != null)
+                {
+                    _playerShip.LookAheadDistance = _lookAheadSlider.Value;
+                    _lookAheadLabel.Text = $"Look-Ahead Distance: {_lookAheadSlider.Value:F2}x";
+                    
+                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    if (_currentShipClassIndex == 1)
+                    {
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.LookAheadDistance = _lookAheadSlider.Value;
+                        }
+                    }
+                    
+                    // Auto-save when slider changes
+                    SaveCurrentShipSettings();
+                }
+            };
+            lookAheadContainer.Widgets.Add(_lookAheadSlider);
+            
+            // Look-ahead visible checkbox
+            _lookAheadVisibleCheckBox = new CheckBox
+            {
+                Text = "Show Line",
+                IsChecked = _playerShip?.LookAheadVisible ?? false
+            };
+            _lookAheadVisibleCheckBox.Click += (s, a) =>
+            {
+                if (_playerShip != null)
+                {
+                    _playerShip.LookAheadVisible = _lookAheadVisibleCheckBox.IsChecked;
+                    
+                    // Always update all friendly ships when checkbox is toggled
+                    foreach (var friendlyShip in _friendlyShips)
+                    {
+                        friendlyShip.LookAheadVisible = _lookAheadVisibleCheckBox.IsChecked;
+                    }
+                    
+                    // Auto-save when checkbox changes
+                    SaveCurrentShipSettings();
+                }
+            };
+            lookAheadContainer.Widgets.Add(_lookAheadVisibleCheckBox);
+            grid.Widgets.Add(lookAheadContainer);
+            
             // Enemy Path checkbox
             _enemyPathVisibleCheckBox = new CheckBox
             {
                 Text = "Show Ship Path",
                 IsChecked = _enemyPathVisible,
                 GridColumn = 0,
-                GridRow = 16,
+                GridRow = 18,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
@@ -830,6 +964,7 @@ namespace Planet9.Scenes
             _enemyPathVisibleCheckBox.Click += (s, a) =>
             {
                 _enemyPathVisible = _enemyPathVisibleCheckBox.IsChecked;
+                SavePanelSettings(); // Auto-save panel settings
             };
             grid.Widgets.Add(_enemyPathVisibleCheckBox);
             
@@ -839,7 +974,7 @@ namespace Planet9.Scenes
                 Text = "Show Ship Target Paths",
                 IsChecked = _enemyTargetPathVisible,
                 GridColumn = 0,
-                GridRow = 17,
+                GridRow = 19,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
@@ -847,6 +982,7 @@ namespace Planet9.Scenes
             _enemyTargetPathVisibleCheckBox.Click += (s, a) =>
             {
                 _enemyTargetPathVisible = _enemyTargetPathVisibleCheckBox.IsChecked;
+                SavePanelSettings(); // Auto-save panel settings
             };
             grid.Widgets.Add(_enemyTargetPathVisibleCheckBox);
             
@@ -856,7 +992,7 @@ namespace Planet9.Scenes
                 Text = $"Music Volume: {(_musicVolume * 100f):F0}%",
                 TextColor = new Color(100, 200, 255), // Light blue
                 GridColumn = 0,
-                GridRow = 18,
+                GridRow = 20,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
@@ -867,7 +1003,7 @@ namespace Planet9.Scenes
             var musicVolumeContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 19,
+                GridRow = 21,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
@@ -922,6 +1058,7 @@ namespace Planet9.Scenes
                         _backgroundMusicInstance.Volume = 0f;
                     }
                 }
+                SavePanelSettings(); // Auto-save panel settings
             };
             musicVolumeContainer.Widgets.Add(_musicEnabledCheckBox);
             grid.Widgets.Add(musicVolumeContainer);
@@ -932,7 +1069,7 @@ namespace Planet9.Scenes
                 Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%",
                 TextColor = new Color(255, 150, 100), // Orange
                 GridColumn = 0,
-                GridRow = 20,
+                GridRow = 22,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
@@ -943,7 +1080,7 @@ namespace Planet9.Scenes
             var sfxVolumeContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 21,
+                GridRow = 23,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
@@ -1009,6 +1146,7 @@ namespace Planet9.Scenes
                         _shipIdleSound.Volume = 0f;
                     }
                 }
+                SavePanelSettings(); // Auto-save panel settings
             };
             sfxVolumeContainer.Widgets.Add(_sfxEnabledCheckBox);
             grid.Widgets.Add(sfxVolumeContainer);
@@ -1344,8 +1482,21 @@ namespace Planet9.Scenes
             // Load saved settings after UI is initialized
             LoadSettings();
             
+            // Load panel/UI settings
+            LoadPanelSettings();
+            
             // Load current ship class settings
             LoadCurrentShipSettings();
+            
+            // Sync look-ahead visibility to all friendly ships after settings are loaded
+            if (_playerShip != null && _lookAheadVisibleCheckBox != null)
+            {
+                bool lookAheadVisible = _lookAheadVisibleCheckBox.IsChecked;
+                foreach (var friendlyShip in _friendlyShips)
+                {
+                    friendlyShip.LookAheadVisible = lookAheadVisible;
+                }
+            }
             
             _previousMouseState = Mouse.GetState();
             _previousKeyboardState = Keyboard.GetState();
@@ -1410,7 +1561,7 @@ namespace Planet9.Scenes
                         var gridSize = gridSizeElement.GetInt32();
                         System.Console.WriteLine($"Loading GridSize: {gridSize}");
                         // Validate and snap to valid values
-                        int[] validGridSizes = { 64, 128, 256, 512 };
+                        int[] validGridSizes = { 64, 128, 256, 512, 1024 };
                         int closestSize = validGridSizes[0];
                         int minDiff = Math.Abs(gridSize - closestSize);
                         foreach (int size in validGridSizes)
@@ -1530,7 +1681,10 @@ namespace Planet9.Scenes
                 // Save current ship class settings
                 SaveCurrentShipSettings();
                 
-                // Save general settings (camera, UI, etc.)
+                // Save panel/UI settings to separate file
+                SavePanelSettings();
+                
+                // Save general settings (camera, etc.)
                 var settings = new
                 {
                     CurrentShipClass = _currentShipClassIndex,
@@ -1570,6 +1724,190 @@ namespace Planet9.Scenes
                     _saveConfirmationLabel.Visible = true;
                     _saveConfirmationTimer = SaveConfirmationDuration;
                 }
+            }
+        }
+        
+        private void SavePanelSettings()
+        {
+            try
+            {
+                var panelSettings = new
+                {
+                    UIVisible = _uiVisible,
+                    BehaviorTextVisible = _behaviorTextVisible,
+                    EnemyPathVisible = _enemyPathVisible,
+                    EnemyTargetPathVisible = _enemyTargetPathVisible,
+                    AvoidanceRangeVisible = _avoidanceRangeVisible,
+                    PathfindingGridVisible = _pathfindingGridVisible,
+                    GridVisible = _gridVisible,
+                    MinimapVisible = _minimapVisible,
+                    MusicEnabled = _musicEnabled,
+                    SFXEnabled = _sfxEnabled
+                };
+                
+                var json = JsonSerializer.Serialize(panelSettings, new JsonSerializerOptions { WriteIndented = true });
+                var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings_Panel.json");
+                System.Console.WriteLine($"Saving panel settings to: {filePath}");
+                File.WriteAllText(filePath, json);
+                System.Console.WriteLine($"Panel settings file written successfully.");
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"Failed to save panel settings: {ex.Message}");
+            }
+        }
+        
+        private void LoadPanelSettings()
+        {
+            try
+            {
+                var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings_Panel.json");
+                if (File.Exists(filePath))
+                {
+                    var json = File.ReadAllText(filePath);
+                    var settings = JsonSerializer.Deserialize<JsonElement>(json);
+                    
+                    // Load UI visibility
+                    if (settings.TryGetProperty("UIVisible", out var uiVisibleElement))
+                    {
+                        _uiVisible = uiVisibleElement.GetBoolean();
+                        if (_desktop?.Root != null)
+                        {
+                            _desktop.Root.Visible = _uiVisible;
+                        }
+                        if (_saveButtonDesktop?.Root != null)
+                        {
+                            _saveButtonDesktop.Root.Visible = _uiVisible;
+                        }
+                    }
+                    
+                    // Load behavior text visibility
+                    if (settings.TryGetProperty("BehaviorTextVisible", out var behaviorTextVisibleElement))
+                    {
+                        _behaviorTextVisible = behaviorTextVisibleElement.GetBoolean();
+                    }
+                    
+                    // Load enemy path visibility
+                    if (settings.TryGetProperty("EnemyPathVisible", out var enemyPathVisibleElement))
+                    {
+                        _enemyPathVisible = enemyPathVisibleElement.GetBoolean();
+                        if (_enemyPathVisibleCheckBox != null)
+                        {
+                            _enemyPathVisibleCheckBox.IsChecked = _enemyPathVisible;
+                        }
+                    }
+                    
+                    // Load enemy target path visibility
+                    if (settings.TryGetProperty("EnemyTargetPathVisible", out var enemyTargetPathVisibleElement))
+                    {
+                        _enemyTargetPathVisible = enemyTargetPathVisibleElement.GetBoolean();
+                        if (_enemyTargetPathVisibleCheckBox != null)
+                        {
+                            _enemyTargetPathVisibleCheckBox.IsChecked = _enemyTargetPathVisible;
+                        }
+                    }
+                    
+                    // Load avoidance range visibility
+                    if (settings.TryGetProperty("AvoidanceRangeVisible", out var avoidanceRangeVisibleElement))
+                    {
+                        _avoidanceRangeVisible = avoidanceRangeVisibleElement.GetBoolean();
+                        if (_avoidanceRangeVisibleCheckBox != null)
+                        {
+                            _avoidanceRangeVisibleCheckBox.IsChecked = _avoidanceRangeVisible;
+                        }
+                    }
+                    
+                    // Load pathfinding grid visibility
+                    if (settings.TryGetProperty("PathfindingGridVisible", out var pathfindingGridVisibleElement))
+                    {
+                        _pathfindingGridVisible = pathfindingGridVisibleElement.GetBoolean();
+                    }
+                    
+                    // Load grid visibility
+                    if (settings.TryGetProperty("GridVisible", out var gridVisibleElement))
+                    {
+                        _gridVisible = gridVisibleElement.GetBoolean();
+                        if (_gridVisibleCheckBox != null)
+                        {
+                            _gridVisibleCheckBox.IsChecked = _gridVisible;
+                        }
+                    }
+                    
+                    // Load minimap visibility
+                    if (settings.TryGetProperty("MinimapVisible", out var minimapVisibleElement))
+                    {
+                        _minimapVisible = minimapVisibleElement.GetBoolean();
+                    }
+                    
+                    // Load music enabled
+                    if (settings.TryGetProperty("MusicEnabled", out var musicEnabledElement))
+                    {
+                        _musicEnabled = musicEnabledElement.GetBoolean();
+                        if (_musicEnabledCheckBox != null)
+                        {
+                            _musicEnabledCheckBox.IsChecked = _musicEnabled;
+                        }
+                        // Apply music state
+                        if (_backgroundMusicInstance != null)
+                        {
+                            if (_musicEnabled)
+                            {
+                                _backgroundMusicInstance.Volume = _musicVolume;
+                                if (_backgroundMusicInstance.State == SoundState.Stopped)
+                                {
+                                    _backgroundMusicInstance.Play();
+                                }
+                            }
+                            else
+                            {
+                                _backgroundMusicInstance.Volume = 0f;
+                            }
+                        }
+                    }
+                    
+                    // Load SFX enabled
+                    if (settings.TryGetProperty("SFXEnabled", out var sfxEnabledElement))
+                    {
+                        _sfxEnabled = sfxEnabledElement.GetBoolean();
+                        if (_sfxEnabledCheckBox != null)
+                        {
+                            _sfxEnabledCheckBox.IsChecked = _sfxEnabled;
+                        }
+                        // Apply SFX state
+                        if (_shipIdleSound != null)
+                        {
+                            if (_sfxEnabled)
+                            {
+                                _shipIdleSound.Volume = _sfxVolume;
+                            }
+                            else
+                            {
+                                _shipIdleSound.Volume = 0f;
+                            }
+                        }
+                        if (_shipFlySound != null)
+                        {
+                            if (_sfxEnabled)
+                            {
+                                _shipFlySound.Volume = _sfxVolume * 0.8f;
+                            }
+                            else
+                            {
+                                _shipFlySound.Volume = 0f;
+                            }
+                        }
+                    }
+                    
+                    System.Console.WriteLine("Panel settings loaded successfully!");
+                }
+                else
+                {
+                    System.Console.WriteLine("Panel settings file not found. Using default values.");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load panel settings: {ex.Message}");
             }
         }
 
@@ -1656,18 +1994,26 @@ namespace Planet9.Scenes
                 }
             }
             
-            // Toggle UI with U key
+            // Toggle behavior text and UI panels with U key - check before preview mode
             if (keyboardState.IsKeyDown(Keys.U) && !_previousKeyboardState.IsKeyDown(Keys.U))
             {
+                _behaviorTextVisible = !_behaviorTextVisible;
                 _uiVisible = !_uiVisible;
+                
+                // Toggle main UI panel visibility
                 if (_desktop?.Root != null)
                 {
                     _desktop.Root.Visible = _uiVisible;
                 }
+                
+                // Toggle save button panel visibility
                 if (_saveButtonDesktop?.Root != null)
                 {
                     _saveButtonDesktop.Root.Visible = _uiVisible;
                 }
+                
+                SavePanelSettings(); // Auto-save panel settings
+                System.Console.WriteLine($"[U KEY] UI Panels: {(_uiVisible ? "ON" : "OFF")}, Behavior Text: {(_behaviorTextVisible ? "ON" : "OFF")}");
             }
             
             // If preview is active, only update preview UI, don't update game
@@ -1926,6 +2272,25 @@ namespace Planet9.Scenes
                 }
             }
             
+            // Toggle A* pathfinding grid with F11
+            if (keyboardState.IsKeyDown(Keys.F11) && !_previousKeyboardState.IsKeyDown(Keys.F11))
+            {
+                _pathfindingGridVisible = !_pathfindingGridVisible;
+                SavePanelSettings(); // Auto-save panel settings
+                System.Console.WriteLine($"A* Pathfinding Grid: {(_pathfindingGridVisible ? "ON" : "OFF")}");
+            }
+            
+            // Toggle world grid with F10
+            if (keyboardState.IsKeyDown(Keys.F10) && !_previousKeyboardState.IsKeyDown(Keys.F10))
+            {
+                _gridVisible = !_gridVisible;
+                if (_gridVisibleCheckBox != null)
+                {
+                    _gridVisibleCheckBox.IsChecked = _gridVisible;
+                }
+                SavePanelSettings(); // Auto-save panel settings
+            }
+            
             // Toggle UI grid overlay and pause game with F12
             if (keyboardState.IsKeyDown(Keys.F12) && !_previousKeyboardState.IsKeyDown(Keys.F12))
             {
@@ -2155,10 +2520,29 @@ namespace Planet9.Scenes
                     Vector2 toPlayer = _playerShip.Position - friendlyShip.Position;
                     float distance = toPlayer.Length();
                     
+                    // Calculate look-ahead target for player avoidance check
+                    Vector2 lookAheadTargetForPlayer = friendlyShip.Position;
+                    if (friendlyShip.IsActivelyMoving())
+                    {
+                        float shipRotation = friendlyShip.Rotation;
+                        Vector2 lookAheadDirection = new Vector2(
+                            (float)System.Math.Sin(shipRotation),
+                            -(float)System.Math.Cos(shipRotation)
+                        );
+                        float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                        lookAheadTargetForPlayer = friendlyShip.Position + lookAheadDirection * lookAheadDist;
+                    }
+                    
+                    // Check if look-ahead target is within player's avoidance radius
+                    Vector2 toLookAheadFromPlayer = lookAheadTargetForPlayer - _playerShip.Position;
+                    float lookAheadDistanceFromPlayer = toLookAheadFromPlayer.Length();
+                    float playerAvoidanceRadiusForLookAhead = _playerShip.AvoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
+                    bool lookAheadInPlayerRadius = lookAheadDistanceFromPlayer < playerAvoidanceRadiusForLookAhead;
+                    
                     // Use a larger range for orbital behavior
                     float orbitRadius = friendlyShip.AvoidanceDetectionRange * 1.5f; // Orbit at 1.5x avoidance range
                     
-                    if (distance < orbitRadius && distance > 0.1f)
+                    if ((distance < orbitRadius || lookAheadInPlayerRadius) && distance > 0.1f)
                     {
                         // Calculate desired orbit distance (maintain distance from player)
                         float desiredDistance = friendlyShip.AvoidanceDetectionRange * 1.2f; // Orbit at 1.2x avoidance range
@@ -2185,15 +2569,38 @@ namespace Planet9.Scenes
                         float orbitalStrength = MathHelper.Clamp(Math.Abs(distanceError) / desiredDistance, 0.3f, 1f);
                         float slowOrbitalForce = playerAvoidanceForce * 0.4f; // 40% of normal force for slow turning
                         
+                        // Increase force if look-ahead is in player's radius (start turning immediately)
+                        if (lookAheadInPlayerRadius)
+                        {
+                            float lookAheadPenetration = (playerAvoidanceRadiusForLookAhead - lookAheadDistanceFromPlayer) / playerAvoidanceRadiusForLookAhead;
+                            orbitalStrength = MathHelper.Clamp(orbitalStrength + lookAheadPenetration * 0.5f, 0.5f, 1.5f);
+                            slowOrbitalForce = playerAvoidanceForce * (0.4f + lookAheadPenetration * 0.3f); // Increase force up to 70% when look-ahead is in radius
+                        }
+                        
                         avoidanceVector += orbitalDirection * orbitalStrength * slowOrbitalForce;
                     }
                 }
                 
                 // Avoid other friendly ships with orbital motion (orbit around each other when navigating past)
                 float avoidanceRadius = friendlyShip.AvoidanceDetectionRange; // Use ship's own setting
-                float avoidanceForce = 200f; // How strongly to avoid (pixels per second)
-                const float minSeparationDistance = 80f; // Minimum distance ships should maintain (increased from 50f)
+                float avoidanceForce = 300f; // Increased avoidance force for better steering
+                const float minSeparationDistance = 80f; // Minimum distance ships should maintain
                 const float collisionDistance = 100f; // Distance at which ships are considered colliding
+                
+                // Calculate look-ahead target position (where the ship is looking ahead)
+                Vector2 lookAheadTarget = friendlyShip.Position;
+                if (friendlyShip.IsActivelyMoving())
+                {
+                    // Calculate look-ahead target in the direction the ship is facing
+                    float shipRotation = friendlyShip.Rotation;
+                    Vector2 lookAheadDirection = new Vector2(
+                        (float)System.Math.Sin(shipRotation),
+                        -(float)System.Math.Cos(shipRotation)
+                    );
+                    float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                    lookAheadTarget = friendlyShip.Position + lookAheadDirection * lookAheadDist;
+                }
+                
                 foreach (var otherShip in _friendlyShips)
                 {
                     if (otherShip == friendlyShip) continue;
@@ -2201,10 +2608,19 @@ namespace Planet9.Scenes
                     Vector2 toOtherShip = otherShip.Position - friendlyShip.Position;
                     float distance = toOtherShip.Length();
                     
-                    // Use the smaller of the two ships' avoidance ranges for detection
-                    float effectiveAvoidanceRadius = Math.Min(avoidanceRadius, otherShip.AvoidanceDetectionRange);
+                    // Use the larger of the two ships' avoidance ranges to ensure ships never enter each other's radius
+                    float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherShip.AvoidanceDetectionRange);
                     
-                    if (distance < effectiveAvoidanceRadius && distance > 0.1f)
+                    // Check if look-ahead target is within other ship's avoidance radius
+                    Vector2 toLookAheadFromOther = lookAheadTarget - otherShip.Position;
+                    float lookAheadDistanceFromOther = toLookAheadFromOther.Length();
+                    bool lookAheadInRadius = lookAheadDistanceFromOther < effectiveAvoidanceRadius;
+                    
+                    // Proactive avoidance: start veering away when approaching the avoidance radius (1.5x radius for early detection)
+                    // OR when look-ahead target hits the avoidance radius
+                    float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                    
+                    if ((distance < avoidanceDetectionRange || lookAheadInRadius) && distance > 0.1f)
                     {
                         toOtherShip.Normalize();
                         
@@ -2267,37 +2683,61 @@ namespace Planet9.Scenes
                         // Calculate base avoidance force for this collision
                         float currentAvoidanceForce = avoidanceForce;
                         
-                        // Calculate avoidance strength (exponentially stronger when closer)
-                        float avoidanceStrength = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                        // Calculate avoidance strength based on distance from avoidance radius
+                        // Stronger when closer to or inside the avoidance radius, or when look-ahead hits the radius
+                        float distanceFromRadius = distance - effectiveAvoidanceRadius;
+                        float avoidanceStrength;
+                        
+                        if (lookAheadInRadius)
+                        {
+                            // Look-ahead target is in avoidance radius - start turning immediately
+                            // Strength based on how far into the radius the look-ahead is
+                            float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromOther) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.5f + lookAheadPenetration * 2f; // Scale from 1.5 to 3.5
+                            currentAvoidanceForce = avoidanceForce * 1.5f; // Strong force to turn away
+                        }
+                        else if (distance < effectiveAvoidanceRadius)
+                        {
+                            // Inside avoidance radius - very strong avoidance
+                            avoidanceStrength = 1f + ((effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius) * 3f;
+                            currentAvoidanceForce = 500f; // Strong force to push away
+                        }
+                        else
+                        {
+                            // Approaching avoidance radius - moderate avoidance that increases as we get closer
+                            float approachFactor = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                            avoidanceStrength = approachFactor * 1.5f; // Scale from 0 to 1.5
+                            currentAvoidanceForce = avoidanceForce * (1f + approachFactor); // Increase force as approaching
+                        }
                         
                         // Blend radial (push away) and tangential (orbit) forces
                         // More tangential when at safe distance, more radial when too close
                         float radialWeight;
                         float tangentialWeight;
                         
-                        if (distance < collisionDistance)
+                        if (distance < effectiveAvoidanceRadius)
                         {
-                            // When colliding, prioritize radial (push away)
-                            float collisionFactor = (collisionDistance - distance) / collisionDistance;
-                            avoidanceStrength = 1f + (collisionFactor * collisionFactor * 5f);
-                            currentAvoidanceForce = 400f;
-                            radialWeight = 0.8f; // 80% radial, 20% tangential
-                            tangentialWeight = 0.2f;
+                            // Inside avoidance radius - prioritize radial (push away strongly)
+                            radialWeight = 0.9f; // 90% radial, 10% tangential
+                            tangentialWeight = 0.1f;
                         }
-                        else if (distance < minSeparationDistance)
+                        else if (distance < effectiveAvoidanceRadius * 1.1f)
                         {
-                            // When very close, more radial but still some orbital
-                            float closeFactor = (minSeparationDistance - distance) / minSeparationDistance;
-                            avoidanceStrength = 1f + (closeFactor * closeFactor * 3f);
-                            currentAvoidanceForce = 300f;
-                            radialWeight = 0.6f; // 60% radial, 40% tangential
-                            tangentialWeight = 0.4f;
+                            // Very close to avoidance radius - strong radial
+                            radialWeight = 0.7f; // 70% radial, 30% tangential
+                            tangentialWeight = 0.3f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.3f)
+                        {
+                            // Approaching avoidance radius - balanced
+                            radialWeight = 0.5f; // 50% radial, 50% tangential
+                            tangentialWeight = 0.5f;
                         }
                         else
                         {
-                            // At safe distance, more orbital motion
-                            radialWeight = 0.3f; // 30% radial, 70% tangential
-                            tangentialWeight = 0.7f;
+                            // At safe distance, more orbital motion (gentle steering)
+                            radialWeight = 0.2f; // 20% radial, 80% tangential
+                            tangentialWeight = 0.8f;
                         }
                         
                         // Combine radial and tangential forces for orbital motion
@@ -2448,8 +2888,8 @@ namespace Planet9.Scenes
                             
                             // Look ahead in the path to find a future waypoint to turn toward
                             // This makes the ship turn toward where it's going, not just the immediate next point
-                            Vector2 lookAheadTarget = currentWaypoint;
-                            float lookAheadDistance = friendlyShip.MoveSpeed * 1.5f; // Look 1.5 seconds ahead
+                            Vector2 pathLookAheadTarget = currentWaypoint;
+                            float lookAheadDistance = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance; // Use ship's look-ahead multiplier
                             
                             // Find the furthest waypoint we can see ahead
                             float accumulatedDist = distToWaypoint;
@@ -2459,7 +2899,7 @@ namespace Planet9.Scenes
                                 if (accumulatedDist + segmentDist <= lookAheadDistance)
                                 {
                                     accumulatedDist += segmentDist;
-                                    lookAheadTarget = path[i];
+                                    pathLookAheadTarget = path[i];
                                 }
                                 else
                                 {
@@ -2469,27 +2909,30 @@ namespace Planet9.Scenes
                                     {
                                         Vector2 segmentDir = path[i] - path[i - 1];
                                         segmentDir.Normalize();
-                                        lookAheadTarget = path[i - 1] + segmentDir * remainingDist;
+                                        pathLookAheadTarget = path[i - 1] + segmentDir * remainingDist;
                                     }
                                     break;
                                 }
                             }
                             
                             // Ensure look-ahead target avoids player's radius
-                            if (IsTooCloseToPlayer(lookAheadTarget, friendlyShip))
+                            if (IsTooCloseToPlayer(pathLookAheadTarget, friendlyShip))
                             {
-                                lookAheadTarget = AvoidPlayerPosition(lookAheadTarget, friendlyShip);
+                                pathLookAheadTarget = AvoidPlayerPosition(pathLookAheadTarget, friendlyShip);
                             }
                             
                             // Clamp look-ahead target to map bounds (keep ships within galaxy map)
                             const float lookAheadMargin = 200f;
-                            lookAheadTarget = new Vector2(
-                                MathHelper.Clamp(lookAheadTarget.X, lookAheadMargin, MapSize - lookAheadMargin),
-                                MathHelper.Clamp(lookAheadTarget.Y, lookAheadMargin, MapSize - lookAheadMargin)
+                            pathLookAheadTarget = new Vector2(
+                                MathHelper.Clamp(pathLookAheadTarget.X, lookAheadMargin, MapSize - lookAheadMargin),
+                                MathHelper.Clamp(pathLookAheadTarget.Y, lookAheadMargin, MapSize - lookAheadMargin)
                             );
                             
+                            // Store look-ahead target for debug line drawing
+                            _friendlyShipLookAheadTarget[friendlyShip] = pathLookAheadTarget;
+                            
                             // Set target to look-ahead position for smoother turning
-                            friendlyShip.SetTargetPosition(lookAheadTarget);
+                            friendlyShip.SetTargetPosition(pathLookAheadTarget);
                         }
                         else
                         {
@@ -2499,6 +2942,17 @@ namespace Planet9.Scenes
                                 MathHelper.Clamp(currentTarget.X, finalTargetMargin, MapSize - finalTargetMargin),
                                 MathHelper.Clamp(currentTarget.Y, finalTargetMargin, MapSize - finalTargetMargin)
                             );
+                            
+                            // Calculate and store look-ahead target for debug line drawing
+                            Vector2 direction = clampedTarget - currentPos;
+                            if (direction.LengthSquared() > 0.1f)
+                            {
+                                direction.Normalize();
+                                float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                                Vector2 endPathLookAheadTarget = currentPos + direction * lookAheadDist;
+                                _friendlyShipLookAheadTarget[friendlyShip] = endPathLookAheadTarget;
+                            }
+                            
                             friendlyShip.SetTargetPosition(clampedTarget);
                         }
                     }
@@ -2507,7 +2961,7 @@ namespace Planet9.Scenes
                 {
                     // Fallback: use simple avoidance if pathfinding grid not available
                     avoidanceVector.Normalize();
-                    float lookAheadDistance = friendlyShip.MoveSpeed * 0.8f;
+                    float lookAheadDistance = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance * 0.8f; // Use ship's look-ahead multiplier
                     Vector2 newAvoidanceTarget = friendlyShip.Position + avoidanceVector * lookAheadDistance;
                     
                     const float safeTargetMargin = 150f;
@@ -2516,13 +2970,17 @@ namespace Planet9.Scenes
                         MathHelper.Clamp(newAvoidanceTarget.Y, safeTargetMargin, MapSize - safeTargetMargin)
                     );
                     
+                    // Store look-ahead target for debug line drawing
+                    _friendlyShipLookAheadTarget[friendlyShip] = newAvoidanceTarget;
+                    
                     friendlyShip.SetTargetPosition(newAvoidanceTarget);
                 }
                 
                 friendlyShip.Update(gameTime);
                 
-                // Ship-to-ship collision detection and resolution (using avoidance range as collision radius)
-                float collisionRadius = friendlyShip.AvoidanceDetectionRange * 0.5f; // Use half of avoidance range as collision radius
+                // Ship-to-ship collision detection and resolution (prevent ships from entering each other's avoidance radius)
+                // Use full avoidance range as the minimum distance ships must maintain
+                float shipAvoidanceRadius = friendlyShip.AvoidanceDetectionRange;
                 foreach (var otherShip in _friendlyShips)
                 {
                     if (otherShip == friendlyShip) continue;
@@ -2530,16 +2988,15 @@ namespace Planet9.Scenes
                     Vector2 direction = friendlyShip.Position - otherShip.Position;
                     float distance = direction.Length();
                     
-                    // Use the smaller of the two ships' collision radii
-                    float otherCollisionRadius = otherShip.AvoidanceDetectionRange * 0.5f;
-                    float minCollisionRadius = Math.Min(collisionRadius, otherCollisionRadius);
-                    float combinedRadius = collisionRadius + otherCollisionRadius;
+                    // Use the larger of the two ships' avoidance ranges for minimum safe distance
+                    float otherAvoidanceRadius = otherShip.AvoidanceDetectionRange;
+                    float minSafeDistance = Math.Max(shipAvoidanceRadius, otherAvoidanceRadius);
                     
-                    // Check if ships are colliding (overlapping)
-                    if (distance < combinedRadius && distance > 0.1f)
+                    // Check if ships are too close (within each other's avoidance radius)
+                    if (distance < minSafeDistance && distance > 0.1f)
                     {
-                        // Calculate overlap amount
-                        float overlap = combinedRadius - distance;
+                        // Calculate how far ships need to be pushed apart
+                        float overlap = minSafeDistance - distance;
                         
                         // Normalize direction
                         direction.Normalize();
@@ -2549,8 +3006,8 @@ namespace Planet9.Scenes
                         friendlyShip.Position += direction * pushDistance;
                         otherShip.Position -= direction * pushDistance;
                         
-                        // Stop ships if they're colliding (prevent them from continuing into each other)
-                        if (distance < minCollisionRadius * 1.5f)
+                        // Stop ships if they're too close (prevent them from continuing into each other)
+                        if (distance < minSafeDistance * 0.8f)
                         {
                             // Stop both ships to prevent further collision
                             friendlyShip.StopMoving();
@@ -2559,18 +3016,19 @@ namespace Planet9.Scenes
                     }
                 }
                 
-                // Also check collision with player ship
+                // Also check collision with player ship (prevent friendly ship from entering player's avoidance radius)
                 if (_playerShip != null)
                 {
                     Vector2 direction = friendlyShip.Position - _playerShip.Position;
                     float distance = direction.Length();
                     
-                    float playerCollisionRadius = _playerShip.AvoidanceDetectionRange * 0.5f;
-                    float combinedRadius = collisionRadius + playerCollisionRadius;
+                    // Use the larger of the two ships' avoidance ranges for minimum safe distance
+                    float playerAvoidanceRadiusForCollision = _playerShip.AvoidanceDetectionRange;
+                    float minSafeDistance = Math.Max(shipAvoidanceRadius, playerAvoidanceRadiusForCollision);
                     
-                    if (distance < combinedRadius && distance > 0.1f)
+                    if (distance < minSafeDistance && distance > 0.1f)
                     {
-                        float overlap = combinedRadius - distance;
+                        float overlap = minSafeDistance - distance;
                         direction.Normalize();
                         
                         // Push friendly ship away from player (player doesn't move)
@@ -2578,7 +3036,7 @@ namespace Planet9.Scenes
                         friendlyShip.Position += direction * pushDistance;
                         
                         // Stop friendly ship if too close
-                        if (distance < collisionRadius * 1.5f)
+                        if (distance < minSafeDistance * 0.8f)
                         {
                             friendlyShip.StopMoving();
                         }
@@ -2709,8 +3167,18 @@ namespace Planet9.Scenes
                     
                     float newTargetX = MathHelper.Clamp(newTarget.X, safeMargin, MapSize - safeMargin);
                     float newTargetY = MathHelper.Clamp(newTarget.Y, safeMargin, MapSize - safeMargin);
+                    newTarget = new Vector2(newTargetX, newTargetY);
                     
-                    friendlyShip.SetTargetPosition(new Vector2(newTargetX, newTargetY));
+                    // Avoid other ships' radius when setting unstuck target
+                    if (IsTooCloseToOtherShips(newTarget, friendlyShip))
+                    {
+                        newTarget = AvoidOtherShipsPosition(newTarget, friendlyShip);
+                        newTargetX = MathHelper.Clamp(newTarget.X, safeMargin, MapSize - safeMargin);
+                        newTargetY = MathHelper.Clamp(newTarget.Y, safeMargin, MapSize - safeMargin);
+                        newTarget = new Vector2(newTargetX, newTargetY);
+                    }
+                    
+                    friendlyShip.SetTargetPosition(newTarget);
                     
                     // Reset stuck timer
                     if (_friendlyShipStuckTimer.ContainsKey(friendlyShip))
@@ -2821,6 +3289,59 @@ namespace Planet9.Scenes
                 MathHelper.Clamp(position.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
                 MathHelper.Clamp(position.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
             );
+        }
+        
+        // Helper method to check if a position is too close to any other friendly ship
+        private bool IsTooCloseToOtherShips(Vector2 position, FriendlyShip friendlyShip)
+        {
+            foreach (var otherShip in _friendlyShips)
+            {
+                if (otherShip == friendlyShip) continue;
+                
+                float distToOtherShip = Vector2.Distance(position, otherShip.Position);
+                // Use the larger of the two ships' avoidance ranges for minimum safe distance (no multiplier - must stay outside radius)
+                float minSafeDistance = Math.Max(friendlyShip.AvoidanceDetectionRange, otherShip.AvoidanceDetectionRange);
+                
+                if (distToOtherShip < minSafeDistance)
+                {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        // Helper method to adjust position away from other friendly ships if too close
+        private Vector2 AvoidOtherShipsPosition(Vector2 position, FriendlyShip friendlyShip)
+        {
+            const float mapBoundaryMargin = 200f;
+            Vector2 adjustedPosition = position;
+            
+            // Check each other ship and adjust position if needed
+            foreach (var otherShip in _friendlyShips)
+            {
+                if (otherShip == friendlyShip) continue;
+                
+                Vector2 toPosition = adjustedPosition - otherShip.Position;
+                float distToOtherShip = toPosition.Length();
+                // Use the larger of the two ships' avoidance ranges for minimum safe distance (no multiplier - must stay outside radius)
+                float minSafeDistance = Math.Max(friendlyShip.AvoidanceDetectionRange, otherShip.AvoidanceDetectionRange);
+                
+                if (distToOtherShip < minSafeDistance && distToOtherShip > 0.1f)
+                {
+                    // Push position away from other ship
+                    toPosition.Normalize();
+                    adjustedPosition = otherShip.Position + toPosition * minSafeDistance;
+                }
+            }
+            
+            // Clamp to map bounds
+            adjustedPosition = new Vector2(
+                MathHelper.Clamp(adjustedPosition.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
+                MathHelper.Clamp(adjustedPosition.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
+            );
+            
+            return adjustedPosition;
         }
         
         private FriendlyShipBehavior GetRandomBehavior()
@@ -2999,6 +3520,18 @@ namespace Planet9.Scenes
                     );
                 }
                 
+                // Avoid other ships' radius - adjust target if too close
+                if (IsTooCloseToOtherShips(nextTarget, friendlyShip))
+                {
+                    nextTarget = AvoidOtherShipsPosition(nextTarget, friendlyShip);
+                    // Clamp to map bounds after adjustment
+                    const float margin = 200f;
+                    nextTarget = new Vector2(
+                        MathHelper.Clamp(nextTarget.X, margin, MapSize - margin),
+                        MathHelper.Clamp(nextTarget.Y, margin, MapSize - margin)
+                    );
+                }
+                
                 // Clear any stored original destination and A* path since we're setting a new behavior target
                 if (_friendlyShipOriginalDestination.ContainsKey(friendlyShip))
                 {
@@ -3072,6 +3605,17 @@ namespace Planet9.Scenes
                     }
                 }
                 
+                // Avoid other ships' radius when creating patrol points
+                if (IsTooCloseToOtherShips(point, friendlyShip))
+                {
+                    point = AvoidOtherShipsPosition(point, friendlyShip);
+                    // Re-clamp after adjustment
+                    point = new Vector2(
+                        MathHelper.Clamp(point.X, margin, MapSize - margin),
+                        MathHelper.Clamp(point.Y, margin, MapSize - margin)
+                    );
+                }
+                
                 points.Add(point);
             }
             
@@ -3116,8 +3660,8 @@ namespace Planet9.Scenes
                         float actualDistance = Vector2.Distance(currentPos, targetPos);
                         if (actualDistance >= minDistance)
                         {
-                            // Check if target is too close to player
-                            if (!IsTooCloseToPlayer(targetPos, friendlyShip))
+                            // Check if target is too close to player or other ships
+                            if (!IsTooCloseToPlayer(targetPos, friendlyShip) && !IsTooCloseToOtherShips(targetPos, friendlyShip))
                             {
                                 break;
                             }
@@ -3163,6 +3707,17 @@ namespace Planet9.Scenes
                 if (IsTooCloseToPlayer(targetPos, friendlyShip))
                 {
                     targetPos = AvoidPlayerPosition(targetPos, friendlyShip);
+                    // Re-clamp after adjustment to keep within map bounds
+                    targetPos = new Vector2(
+                        MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
+                        MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin)
+                    );
+                }
+                
+                // Avoid other ships' radius - adjust target if too close
+                if (IsTooCloseToOtherShips(targetPos, friendlyShip))
+                {
+                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip);
                     // Re-clamp after adjustment to keep within map bounds
                     targetPos = new Vector2(
                         MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
@@ -3264,20 +3819,22 @@ namespace Planet9.Scenes
                             continue;
                     }
                     
+                    // Check if target is safe from player and other ships
+                    bool safeFromPlayer = true;
                     if (_playerShip != null)
                     {
                         float distToPlayer = Vector2.Distance(targetPos, _playerShip.Position);
                         float minSafeDistance = _playerShip.AvoidanceDetectionRange * 1.5f; // 1.5x player's avoidance range
-                        if (distToPlayer >= minSafeDistance && distToCenter >= minDistanceFromCenter)
-                        {
-                            break;
-                        }
-                        else if (attempts >= maxAttempts)
-                        {
-                            break;
-                        }
+                        safeFromPlayer = distToPlayer >= minSafeDistance;
                     }
-                    else if (distToCenter >= minDistanceFromCenter)
+                    
+                    bool safeFromOtherShips = !IsTooCloseToOtherShips(targetPos, friendlyShip);
+                    
+                    if (safeFromPlayer && safeFromOtherShips && distToCenter >= minDistanceFromCenter)
+                    {
+                        break;
+                    }
+                    else if (attempts >= maxAttempts)
                     {
                         break;
                     }
@@ -3287,6 +3844,18 @@ namespace Planet9.Scenes
                 if (IsTooCloseToPlayer(targetPos, friendlyShip))
                 {
                     targetPos = AvoidPlayerPosition(targetPos, friendlyShip);
+                    // Re-clamp to map bounds
+                    const float margin = 200f;
+                    targetPos = new Vector2(
+                        MathHelper.Clamp(targetPos.X, margin, MapSize - margin),
+                        MathHelper.Clamp(targetPos.Y, margin, MapSize - margin)
+                    );
+                }
+                
+                // Ensure target avoids other ships' radius
+                if (IsTooCloseToOtherShips(targetPos, friendlyShip))
+                {
+                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip);
                     // Re-clamp to map bounds
                     const float margin = 200f;
                     targetPos = new Vector2(
@@ -3372,6 +3941,14 @@ namespace Planet9.Scenes
                         );
                     }
                 }
+            }
+            
+            // Draw A* pathfinding grid (in world space, before ships)
+            if (_pathfindingGridVisible && _pathfindingGrid != null && _gridPixelTexture != null)
+            {
+                // Update grid with current obstacles for visualization
+                UpdatePathfindingGridForVisualization();
+                DrawPathfindingGrid(spriteBatch);
             }
             
             // Draw grid lines (in world space, before ship so it draws under)
@@ -3462,6 +4039,9 @@ namespace Planet9.Scenes
                 DrawEnemyTargetPaths(spriteBatch);
             }
             
+            // Draw look-ahead debug lines if enabled
+            DrawLookAheadLines(spriteBatch);
+            
             // Draw friendly ships
             foreach (var friendlyShip in _friendlyShips)
             {
@@ -3472,16 +4052,18 @@ namespace Planet9.Scenes
             spriteBatch.End();
             
             // Draw behavior labels in screen space (after world-space batch ends)
-            if (_font != null)
+            if (_font != null && _behaviorTextVisible)
             {
                 spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend);
                 
+                int behaviorLabelsDrawn = 0;
                 foreach (var friendlyShip in _friendlyShips)
                 {
                     if (_friendlyShipBehaviors.ContainsKey(friendlyShip))
                     {
                         FriendlyShipBehavior behavior = _friendlyShipBehaviors[friendlyShip];
                         string behaviorText = behavior.ToString();
+                        behaviorLabelsDrawn++;
                         
                         // Calculate text position (below the ship in world space)
                         Vector2 shipPosition = friendlyShip.Position;
@@ -3503,7 +4085,17 @@ namespace Planet9.Scenes
                     }
                 }
                 
+                // Debug output (only print occasionally to avoid spam)
+                if (behaviorLabelsDrawn > 0 && System.Environment.TickCount % 3000 < 16) // Print roughly every 3 seconds
+                {
+                    System.Console.WriteLine($"[BEHAVIOR TEXT] Drawing {behaviorLabelsDrawn} behavior labels, Visible: {_behaviorTextVisible}, Font: {_font != null}");
+                }
+                
                 spriteBatch.End();
+            }
+            else if (System.Environment.TickCount % 3000 < 16) // Debug when not drawing
+            {
+                System.Console.WriteLine($"[BEHAVIOR TEXT] Not drawing - Font: {_font != null}, Visible: {_behaviorTextVisible}");
             }
             
             // Draw lasers with additive blending for glow effect
@@ -3524,8 +4116,11 @@ namespace Planet9.Scenes
 
             spriteBatch.End();
             
-            // Draw minimap in upper right corner
-            DrawMinimap(spriteBatch);
+            // Draw minimap in upper right corner (if visible)
+            if (_minimapVisible)
+            {
+                DrawMinimap(spriteBatch);
+            }
             
             // Draw UI grid overlay if enabled (draw before UI so grid appears under UI)
             if (_uiGridVisible)
@@ -3533,9 +4128,12 @@ namespace Planet9.Scenes
                 DrawUIGrid(spriteBatch);
             }
             
-            // Draw UI overlay (zoom level) on top
-            _desktop?.Render();
-            _saveButtonDesktop?.Render();
+            // Draw UI overlay (zoom level) on top - only if visible
+            if (_uiVisible)
+            {
+                _desktop?.Render();
+                _saveButtonDesktop?.Render();
+            }
             
             // Update coordinate label position in Draw to ensure it's always updated
             if (_uiGridVisible && _mouseCoordinateLabel != null)
@@ -3694,7 +4292,9 @@ namespace Planet9.Scenes
                         Inertia = _playerShip.Inertia,
                         AimRotationSpeed = _playerShip.AimRotationSpeed,
                         Drift = _playerShip.Drift,
-                        AvoidanceDetectionRange = _avoidanceDetectionRange
+                        AvoidanceDetectionRange = _avoidanceDetectionRange,
+                        LookAheadDistance = _playerShip.LookAheadDistance,
+                        LookAheadVisible = _playerShip.LookAheadVisible
                     };
                     var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                     File.WriteAllText(filePath, json);
@@ -3711,7 +4311,9 @@ namespace Planet9.Scenes
                         AimRotationSpeed = _playerShip.AimRotationSpeed,
                         Drift = _playerShip.Drift,
                         AvoidanceDetectionRange = _avoidanceDetectionRange,
-                        ShipIdleRate = _shipIdleRate
+                        ShipIdleRate = _shipIdleRate,
+                        LookAheadDistance = _playerShip.LookAheadDistance,
+                        LookAheadVisible = _playerShip.LookAheadVisible
                     };
                     var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                     File.WriteAllText(filePath, json);
@@ -3825,6 +4427,38 @@ namespace Planet9.Scenes
                         if (_shipIdleRateLabel != null) _shipIdleRateLabel.Text = $"Ship Idle Rate: {(_shipIdleRate * 100f):F0}%";
                     }
                     
+                    // Load look-ahead distance
+                    if (settings.TryGetProperty("LookAheadDistance", out var lookAheadDistanceElement))
+                    {
+                        var lookAheadDistance = lookAheadDistanceElement.GetSingle();
+                        _playerShip.LookAheadDistance = MathHelper.Clamp(lookAheadDistance, 0.5f, 5.0f);
+                        if (_lookAheadSlider != null) _lookAheadSlider.Value = _playerShip.LookAheadDistance;
+                        if (_lookAheadLabel != null) _lookAheadLabel.Text = $"Look-Ahead Distance: {_playerShip.LookAheadDistance:F2}x";
+                        
+                        // If loading FriendlyShip settings, also update all friendly ships
+                        if (_currentShipClassIndex == 1)
+                        {
+                            foreach (var friendlyShip in _friendlyShips)
+                            {
+                                friendlyShip.LookAheadDistance = _playerShip.LookAheadDistance;
+                            }
+                        }
+                    }
+                    
+                    // Load look-ahead visible
+                    if (settings.TryGetProperty("LookAheadVisible", out var lookAheadVisibleElement))
+                    {
+                        var lookAheadVisible = lookAheadVisibleElement.GetBoolean();
+                        _playerShip.LookAheadVisible = lookAheadVisible;
+                        if (_lookAheadVisibleCheckBox != null) _lookAheadVisibleCheckBox.IsChecked = lookAheadVisible;
+                        
+                        // Always update all friendly ships with the checkbox state
+                        foreach (var friendlyShip in _friendlyShips)
+                        {
+                            friendlyShip.LookAheadVisible = lookAheadVisible;
+                        }
+                    }
+                    
                     System.Console.WriteLine($"Loaded {className} settings from: {filePath}");
                 }
                 else
@@ -3893,6 +4527,118 @@ namespace Planet9.Scenes
             }
             
             spriteBatch.End();
+        }
+        
+        private void UpdatePathfindingGridForVisualization()
+        {
+            if (_pathfindingGrid == null) return;
+            
+            // Clear and update obstacles for visualization
+            _pathfindingGrid.ClearObstacles();
+            
+            // Use a standard obstacle radius for visualization
+            float obstacleRadius = 150f; // Standard radius for visualization
+            
+            // Mark all friendly ships as obstacles
+            foreach (var ship in _friendlyShips)
+            {
+                _pathfindingGrid.SetObstacle(ship.Position, obstacleRadius, true);
+            }
+            
+            // Mark player ship as obstacle
+            if (_playerShip != null)
+            {
+                _pathfindingGrid.SetObstacle(_playerShip.Position, obstacleRadius, true);
+            }
+        }
+        
+        private void DrawPathfindingGrid(SpriteBatch spriteBatch)
+        {
+            if (_pathfindingGrid == null || _gridPixelTexture == null)
+            {
+                System.Console.WriteLine($"DrawPathfindingGrid: _pathfindingGrid={_pathfindingGrid != null}, _gridPixelTexture={_gridPixelTexture != null}");
+                return;
+            }
+            
+            // Calculate visible grid range based on camera view
+            var viewWidth = GraphicsDevice.Viewport.Width / _cameraZoom;
+            var viewHeight = GraphicsDevice.Viewport.Height / _cameraZoom;
+            var padding = _pathfindingGrid.CellSize; // Add one cell padding on each side
+            
+            var minX = (int)Math.Floor((_cameraPosition.X - viewWidth / 2f - padding) / _pathfindingGrid.CellSize);
+            var maxX = (int)Math.Ceiling((_cameraPosition.X + viewWidth / 2f + padding) / _pathfindingGrid.CellSize);
+            var minY = (int)Math.Floor((_cameraPosition.Y - viewHeight / 2f - padding) / _pathfindingGrid.CellSize);
+            var maxY = (int)Math.Ceiling((_cameraPosition.Y + viewHeight / 2f + padding) / _pathfindingGrid.CellSize);
+            
+            // Clamp to grid bounds
+            minX = Math.Max(0, minX);
+            maxX = Math.Min(_pathfindingGrid.GridWidth - 1, maxX);
+            minY = Math.Max(0, minY);
+            maxY = Math.Min(_pathfindingGrid.GridHeight - 1, maxY);
+            
+            float cellSize = _pathfindingGrid.CellSize;
+            
+            int cellsDrawn = 0;
+            int walkableCells = 0;
+            int obstacleCells = 0;
+            
+            // Draw grid cells
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int y = minY; y <= maxY; y++)
+                {
+                    var node = _pathfindingGrid.GetNodeAt(x, y);
+                    if (node == null) continue;
+                    
+                    Vector2 cellPos = new Vector2(x * cellSize, y * cellSize);
+                    Rectangle cellRect = new Rectangle((int)cellPos.X, (int)cellPos.Y, (int)cellSize, (int)cellSize);
+                    
+                    // Draw cell based on walkability
+                    Color cellColor;
+                    if (!node.Walkable)
+                    {
+                        // Obstacle - red with full opacity for visibility
+                        cellColor = Color.Red;
+                        obstacleCells++;
+                    }
+                    else
+                    {
+                        // Walkable - bright green for visibility
+                        cellColor = new Color(0, 255, 0, 180);
+                        walkableCells++;
+                    }
+                    
+                    spriteBatch.Draw(_gridPixelTexture, cellRect, cellColor);
+                    cellsDrawn++;
+                    
+                    // Draw cell border with higher opacity
+                    Color borderColor = new Color(200, 200, 200, 255);
+                    int borderWidth = 2; // Thicker border for visibility
+                    
+                    // Top edge
+                    spriteBatch.Draw(_gridPixelTexture, 
+                        new Rectangle(cellRect.X, cellRect.Y, cellRect.Width, borderWidth), 
+                        borderColor);
+                    // Bottom edge
+                    spriteBatch.Draw(_gridPixelTexture, 
+                        new Rectangle(cellRect.X, cellRect.Y + cellRect.Height - borderWidth, cellRect.Width, borderWidth), 
+                        borderColor);
+                    // Left edge
+                    spriteBatch.Draw(_gridPixelTexture, 
+                        new Rectangle(cellRect.X, cellRect.Y, borderWidth, cellRect.Height), 
+                        borderColor);
+                    // Right edge
+                    spriteBatch.Draw(_gridPixelTexture, 
+                        new Rectangle(cellRect.X + cellRect.Width - borderWidth, cellRect.Y, borderWidth, cellRect.Height), 
+                        borderColor);
+                }
+            }
+            
+            // Debug output (only print occasionally to avoid spam)
+            if (cellsDrawn > 0 && System.Environment.TickCount % 2000 < 16) // Print roughly every 2 seconds
+            {
+                System.Console.WriteLine($"A* Grid: Drawing {cellsDrawn} cells (Walkable: {walkableCells}, Obstacles: {obstacleCells}), Range: X[{minX}-{maxX}] Y[{minY}-{maxY}]");
+            }
         }
         
         private void DrawMinimap(SpriteBatch spriteBatch)
@@ -4174,6 +4920,116 @@ namespace Planet9.Scenes
             }
         }
         
+        private void DrawLookAheadLines(SpriteBatch spriteBatch)
+        {
+            if (_gridPixelTexture == null)
+            {
+                System.Console.WriteLine("[LOOK-AHEAD] _gridPixelTexture is null!");
+                return;
+            }
+            
+            // Draw look-ahead lines for player ship
+            if (_playerShip != null && _playerShip.LookAheadVisible)
+            {
+                Vector2 shipPos = _playerShip.Position;
+                
+                // Calculate look-ahead target in the direction the ship is facing
+                // Ship rotation: 0 = pointing up (north), so we need to adjust for sprite rotation
+                // Rotation is in radians, where 0 = up, Pi/2 = right, Pi = down, -Pi/2 = left
+                float shipRotation = _playerShip.Rotation;
+                
+                // Convert rotation to direction vector (ship points up at rotation 0)
+                // Rotation 0 = (0, -1) in screen space, but we need world space
+                Vector2 direction = new Vector2(
+                    (float)System.Math.Sin(shipRotation),  // X component
+                    -(float)System.Math.Cos(shipRotation) // Y component (negative because up is negative Y in screen space)
+                );
+                
+                float lookAheadDist = _playerShip.MoveSpeed * _playerShip.LookAheadDistance;
+                Vector2 lookAheadTarget = shipPos + direction * lookAheadDist;
+                
+                // Draw line from ship to look-ahead target
+                Vector2 lineDir = lookAheadTarget - shipPos;
+                float lineLength = lineDir.Length();
+                if (lineLength > 0.1f)
+                {
+                    float rotation = (float)System.Math.Atan2(lineDir.Y, lineDir.X);
+                    Color lineColor = new Color(0, 255, 255, 255); // Cyan for look-ahead line (fully opaque for visibility)
+                    
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        shipPos,
+                        null,
+                        lineColor,
+                        rotation,
+                        new Vector2(0, 0.5f),
+                        new Vector2(lineLength, 3f), // 3 pixel thick line for better visibility
+                        SpriteEffects.None,
+                        0f
+                    );
+                    
+                    // Draw a small circle at the look-ahead target
+                    DrawCircle(spriteBatch, lookAheadTarget, 6f, new Color(0, 255, 255, 255)); // Cyan circle, larger for visibility
+                }
+            }
+            else
+            {
+                if (_playerShip == null)
+                {
+                    System.Console.WriteLine("[LOOK-AHEAD] _playerShip is null!");
+                }
+                else if (!_playerShip.LookAheadVisible)
+                {
+                    System.Console.WriteLine("[LOOK-AHEAD] LookAheadVisible is false!");
+                }
+            }
+            
+            // Draw look-ahead lines for friendly ships
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                if (friendlyShip.LookAheadVisible)
+                {
+                    Vector2 shipPos = friendlyShip.Position;
+                    
+                    // Calculate look-ahead target in the direction the ship is facing
+                    float shipRotation = friendlyShip.Rotation;
+                    
+                    // Convert rotation to direction vector (ship points up at rotation 0)
+                    Vector2 direction = new Vector2(
+                        (float)System.Math.Sin(shipRotation),  // X component
+                        -(float)System.Math.Cos(shipRotation) // Y component (negative because up is negative Y in screen space)
+                    );
+                    
+                    float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                    Vector2 lookAheadTarget = shipPos + direction * lookAheadDist;
+                    
+                    // Draw line from ship to look-ahead target
+                    Vector2 lineDir = lookAheadTarget - shipPos;
+                    float lineLength = lineDir.Length();
+                    if (lineLength > 0.1f)
+                    {
+                        float rotation = (float)System.Math.Atan2(lineDir.Y, lineDir.X);
+                        Color lineColor = new Color(0, 255, 255, 255); // Cyan for look-ahead line (fully opaque)
+                        
+                        spriteBatch.Draw(
+                            _gridPixelTexture,
+                            shipPos,
+                            null,
+                            lineColor,
+                            rotation,
+                            new Vector2(0, 0.5f),
+                            new Vector2(lineLength, 3f), // 3 pixel thick line for better visibility
+                            SpriteEffects.None,
+                            0f
+                        );
+                        
+                        // Draw a small circle at the look-ahead target
+                        DrawCircle(spriteBatch, lookAheadTarget, 6f, new Color(0, 255, 255, 255)); // Cyan circle, larger for visibility
+                    }
+                }
+            }
+        }
+        
         private void DrawCircle(SpriteBatch spriteBatch, Vector2 center, float radius, Color color)
         {
             if (_gridPixelTexture == null) return;
@@ -4247,6 +5103,10 @@ namespace Planet9.Scenes
         private float _cellSize;
         private float _mapSize;
         
+        public int GridWidth => _gridWidth;
+        public int GridHeight => _gridHeight;
+        public float CellSize => _cellSize;
+        
         public PathfindingGrid(float mapSize, float cellSize = 128f)
         {
             _mapSize = mapSize;
@@ -4274,6 +5134,11 @@ namespace Planet9.Scenes
             if (x < 0 || x >= _gridWidth || y < 0 || y >= _gridHeight)
                 return null;
             return _grid[x, y];
+        }
+        
+        public PathNode? GetNodeAt(int x, int y)
+        {
+            return GetNode(x, y);
         }
         
         public PathNode? GetNodeFromWorld(Vector2 worldPos)
