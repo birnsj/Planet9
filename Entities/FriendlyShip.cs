@@ -7,6 +7,7 @@ namespace Planet9.Entities
     public class FriendlyShip : PlayerShip
     {
         private float _targetRotation = 0f; // Smooth rotation target
+        public bool IsIdle { get; set; } = false; // Track if ship is in idle behavior
         
         public FriendlyShip(GraphicsDevice graphicsDevice, ContentManager content) 
             : base(graphicsDevice, content)
@@ -59,14 +60,17 @@ namespace Planet9.Entities
                     // Update position
                     Position += _velocity * deltaTime;
                     
-                    // Smoothly rotate to face the direction of movement using shortest rotation path
-                    if (direction.LengthSquared() > 0.1f) // Only rotate if there's a direction
+                    // Smoothly rotate to face the direction of movement using shortest rotation path (unless in idle behavior)
+                    if (!IsIdle && direction.LengthSquared() > 0.1f) // Only rotate if there's a direction
                     {
                         // Calculate rotation to face target direction (not velocity, but desired direction)
                         float targetRotation = (float)System.Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
                         
+                        // Update smooth rotation target
+                        _targetRotation = targetRotation;
+                        
                         // Calculate shortest rotation path
-                        float angleDiff = targetRotation - Rotation;
+                        float angleDiff = _targetRotation - Rotation;
                         
                         // Normalize angle difference to [-Pi, Pi] to get shortest path
                         while (angleDiff > MathHelper.Pi)
@@ -74,17 +78,18 @@ namespace Planet9.Entities
                         while (angleDiff < -MathHelper.Pi)
                             angleDiff += MathHelper.TwoPi;
                         
-                        // Smoothly rotate towards target using rotation speed
+                        // Smoothly rotate towards target using rotation speed with interpolation
                         float rotationDelta = RotationSpeed * deltaTime;
                         if (System.Math.Abs(angleDiff) < rotationDelta)
                         {
                             // Close enough, snap to target
-                            Rotation = targetRotation;
+                            Rotation = _targetRotation;
                         }
                         else
                         {
-                            // Rotate towards target using shortest path
-                            Rotation += System.Math.Sign(angleDiff) * rotationDelta;
+                            // Smooth interpolation for smoother turning
+                            float lerpFactor = MathHelper.Clamp(rotationDelta / System.Math.Abs(angleDiff), 0f, 1f);
+                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpFactor);
                         }
                     }
                 }
@@ -118,19 +123,8 @@ namespace Planet9.Entities
                     
                     Position += driftVelocity * deltaTime;
                     
-                    // Smoothly face drift direction using shortest path
-                    if (driftVelocity.LengthSquared() > 0.1f)
-                    {
-                        float targetRotation = (float)System.Math.Atan2(driftVelocity.Y, driftVelocity.X) + MathHelper.PiOver2;
-                        float angleDiff = targetRotation - Rotation;
-                        while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
-                        while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
-                        float rotationDelta = RotationSpeed * deltaTime;
-                        if (System.Math.Abs(angleDiff) < rotationDelta)
-                            Rotation = targetRotation;
-                        else
-                            Rotation += System.Math.Sign(angleDiff) * rotationDelta;
-                    }
+                    // Do not rotate when idle - ships should maintain their current rotation
+                    // (Rotation code removed for idle behavior)
                 }
                 else
                 {
@@ -138,18 +132,26 @@ namespace Planet9.Entities
                     _velocity *= Inertia;
                     Position += _velocity * deltaTime;
                     
-                    // Smoothly face velocity direction while coasting
-                    if (_velocity.LengthSquared() > 0.1f)
+                    // Do not rotate when idle - ships should maintain their current rotation
+                    // Only rotate if not idle and has significant velocity
+                    if (!IsIdle && _velocity.LengthSquared() > 100f) // Only rotate if moving with significant speed
                     {
                         float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
-                        float angleDiff = targetRotation - Rotation;
+                        _targetRotation = targetRotation;
+                        
+                        float angleDiff = _targetRotation - Rotation;
                         while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
                         while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
+                        
                         float rotationDelta = RotationSpeed * deltaTime;
                         if (System.Math.Abs(angleDiff) < rotationDelta)
-                            Rotation = targetRotation;
+                            Rotation = _targetRotation;
                         else
-                            Rotation += System.Math.Sign(angleDiff) * rotationDelta;
+                        {
+                            // Smooth interpolation for smoother turning
+                            float lerpFactor = MathHelper.Clamp(rotationDelta / System.Math.Abs(angleDiff), 0f, 1f);
+                            Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpFactor);
+                        }
                     }
                 }
             }
