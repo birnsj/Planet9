@@ -46,6 +46,10 @@ namespace Planet9.Scenes
         private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipDecisionTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastAvoidanceTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastPosition = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipStuckTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>> _friendlyShipPaths = new System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>>();
+        private const int MaxPathPoints = 100; // Maximum number of path points to store per ship
         private System.Random _random = new System.Random();
         
         // Lasers
@@ -74,6 +78,12 @@ namespace Planet9.Scenes
         private Label? _driftLabel;
         private HorizontalSlider? _avoidanceRangeSlider;
         private Label? _avoidanceRangeLabel;
+        private CheckBox? _avoidanceRangeVisibleCheckBox;
+        private bool _avoidanceRangeVisible = false; // Toggle for showing avoidance range
+        private CheckBox? _enemyPathVisibleCheckBox;
+        private bool _enemyPathVisible = false; // Toggle for showing enemy paths
+        private CheckBox? _enemyTargetPathVisibleCheckBox;
+        private bool _enemyTargetPathVisible = false; // Toggle for showing enemy target paths
         private float _avoidanceDetectionRange = 300f; // Default avoidance detection range
         private HorizontalSlider? _shipIdleRateSlider;
         private Label? _shipIdleRateLabel;
@@ -218,10 +228,11 @@ namespace Planet9.Scenes
             
             // Load FriendlyShip settings from saved file
             float friendlyMoveSpeed = 300f; // Default values
-            float friendlyRotationSpeed = 5f;
+            float friendlyRotationSpeed = 3f; // Reduced for smoother turning
             float friendlyInertia = 0.9f;
-            float friendlyAimRotationSpeed = 5f;
+            float friendlyAimRotationSpeed = 3f; // Reduced for smoother turning
             float friendlyDrift = 0f; // Default no drift
+            float friendlyAvoidanceRange = 300f; // Default avoidance range
             
             try
             {
@@ -251,6 +262,10 @@ namespace Planet9.Scenes
                     {
                         friendlyDrift = driftElement.GetSingle();
                     }
+                    if (settings.TryGetProperty("AvoidanceDetectionRange", out var avoidanceRangeElement))
+                    {
+                        friendlyAvoidanceRange = avoidanceRangeElement.GetSingle();
+                    }
                 }
             }
             catch (System.Exception ex)
@@ -274,6 +289,7 @@ namespace Planet9.Scenes
                 friendlyShip.Inertia = friendlyInertia;
                 friendlyShip.AimRotationSpeed = friendlyAimRotationSpeed;
                 friendlyShip.Drift = friendlyDrift; // Apply drift setting
+                friendlyShip.AvoidanceDetectionRange = friendlyAvoidanceRange; // Apply avoidance range setting
                 
                 _friendlyShips.Add(friendlyShip);
             }
@@ -328,6 +344,10 @@ namespace Planet9.Scenes
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Drift slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Avoidance range label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Avoidance range slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship Idle Rate label
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Ship Idle Rate slider
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Enemy Path checkbox
+            grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Enemy Target Path checkbox
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume label
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // Music volume slider
             grid.RowsProportions.Add(new Proportion(ProportionType.Auto)); // SFX volume label
@@ -388,9 +408,9 @@ namespace Planet9.Scenes
             // Turn rate slider
             _turnRateSlider = new HorizontalSlider
             {
-                Minimum = 1f,
-                Maximum = 20f,
-                Value = _playerShip?.RotationSpeed ?? 5f,
+                Minimum = 0.5f,
+                Maximum = 10f, // Reduced max for less aggressive turning
+                Value = _playerShip?.RotationSpeed ?? 3f,
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
@@ -512,9 +532,9 @@ namespace Planet9.Scenes
             // Aim rotation speed slider (how fast ship rotates toward cursor when stationary)
             _aimRotationSpeedSlider = new HorizontalSlider
             {
-                Minimum = 1f,
-                Maximum = 20f,
-                Value = _playerShip?.AimRotationSpeed ?? 5f,
+                Minimum = 0.5f,
+                Maximum = 10f, // Reduced max for less aggressive turning
+                Value = _playerShip?.AimRotationSpeed ?? 3f,
                 Width = 200,
                 Height = 10, // Half the default height
                 GridColumn = 0,
@@ -647,7 +667,16 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_avoidanceRangeLabel);
             
-            // Avoidance Detection Range slider
+            // Avoidance Detection Range slider and checkbox in a horizontal stack
+            var avoidanceRangeContainer = new HorizontalStackPanel
+            {
+                GridColumn = 0,
+                GridRow = 13,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Spacing = 10
+            };
+            
             _avoidanceRangeSlider = new HorizontalSlider
             {
                 Minimum = 100f,
@@ -655,8 +684,6 @@ namespace Planet9.Scenes
                 Value = _avoidanceDetectionRange,
                 Width = 200,
                 Height = 10, // Half the default height
-                GridColumn = 0,
-                GridRow = 13,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
@@ -665,10 +692,42 @@ namespace Planet9.Scenes
             {
                 _avoidanceDetectionRange = _avoidanceRangeSlider.Value;
                 _avoidanceRangeLabel.Text = $"Avoidance Detection Range: {_avoidanceDetectionRange:F0}";
+                
+                // Update ships based on current ship class
+                if (_currentShipClassIndex == 1)
+                {
+                    // FriendlyShip class - update all friendly ships
+                    foreach (var friendlyShip in _friendlyShips)
+                    {
+                        friendlyShip.AvoidanceDetectionRange = _avoidanceRangeSlider.Value;
+                    }
+                }
+                else if (_playerShip != null)
+                {
+                    // PlayerShip class - update player ship
+                    _playerShip.AvoidanceDetectionRange = _avoidanceRangeSlider.Value;
+                }
+                
                 // Auto-save when slider changes
                 SaveCurrentShipSettings();
             };
-            grid.Widgets.Add(_avoidanceRangeSlider);
+            avoidanceRangeContainer.Widgets.Add(_avoidanceRangeSlider);
+            
+            // Checkbox to toggle avoidance range visibility
+            _avoidanceRangeVisibleCheckBox = new CheckBox
+            {
+                Text = "Show Range",
+                IsChecked = _avoidanceRangeVisible,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            _avoidanceRangeVisibleCheckBox.Click += (s, a) =>
+            {
+                _avoidanceRangeVisible = _avoidanceRangeVisibleCheckBox.IsChecked;
+            };
+            avoidanceRangeContainer.Widgets.Add(_avoidanceRangeVisibleCheckBox);
+            
+            grid.Widgets.Add(avoidanceRangeContainer);
             
             // Ship Idle Rate label
             _shipIdleRateLabel = new Label
@@ -706,13 +765,47 @@ namespace Planet9.Scenes
             };
             grid.Widgets.Add(_shipIdleRateSlider);
             
+            // Enemy Path checkbox
+            _enemyPathVisibleCheckBox = new CheckBox
+            {
+                Text = "Show Enemy Paths",
+                IsChecked = _enemyPathVisible,
+                GridColumn = 0,
+                GridRow = 16,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            _enemyPathVisibleCheckBox.Click += (s, a) =>
+            {
+                _enemyPathVisible = _enemyPathVisibleCheckBox.IsChecked;
+            };
+            grid.Widgets.Add(_enemyPathVisibleCheckBox);
+            
+            // Enemy Target Path checkbox
+            _enemyTargetPathVisibleCheckBox = new CheckBox
+            {
+                Text = "Show Enemy Target Paths",
+                IsChecked = _enemyTargetPathVisible,
+                GridColumn = 0,
+                GridRow = 17,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
+            };
+            _enemyTargetPathVisibleCheckBox.Click += (s, a) =>
+            {
+                _enemyTargetPathVisible = _enemyTargetPathVisibleCheckBox.IsChecked;
+            };
+            grid.Widgets.Add(_enemyTargetPathVisibleCheckBox);
+            
             // Music volume label
             _musicVolumeLabel = new Label
             {
                 Text = $"Music Volume: {(_musicVolume * 100f):F0}%",
                 TextColor = new Color(100, 200, 255), // Light blue
                 GridColumn = 0,
-                GridRow = 16,
+                GridRow = 18,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
@@ -723,7 +816,7 @@ namespace Planet9.Scenes
             var musicVolumeContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 17,
+                GridRow = 19,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
@@ -788,7 +881,7 @@ namespace Planet9.Scenes
                 Text = $"SFX Volume: {(_sfxVolume * 100f):F0}%",
                 TextColor = new Color(255, 150, 100), // Orange
                 GridColumn = 0,
-                GridRow = 18,
+                GridRow = 20,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // Padding handled by panel
@@ -799,7 +892,7 @@ namespace Planet9.Scenes
             var sfxVolumeContainer = new HorizontalStackPanel
             {
                 GridColumn = 0,
-                GridRow = 19,
+                GridRow = 21,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Spacing = 10,
@@ -1103,8 +1196,8 @@ namespace Planet9.Scenes
             {
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                Width = 700,
-                Height = 700
+                Width = 500,
+                Height = 500
             };
             
             _previewCoordinateLabel = new Label
@@ -1113,7 +1206,7 @@ namespace Planet9.Scenes
                 TextColor = Color.White,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 10)
+                Margin = new Myra.Graphics2D.Thickness(0, 10, 0, 0)
             };
             _previewPanel.Widgets.Add(_previewCoordinateLabel);
             
@@ -1124,25 +1217,19 @@ namespace Planet9.Scenes
                 TextColor = Color.Yellow,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(10, 40, 10, 10)
+                Margin = new Myra.Graphics2D.Thickness(0, 35, 0, 0)
             };
             _previewPanel.Widgets.Add(_previewShipLabel);
             
-            // Arrow buttons container - positioned inside the preview panel at the bottom
-            var arrowContainer = new HorizontalStackPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Bottom,
-                Spacing = 20,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 60) // Extra bottom padding to position above close button
-            };
-            
-            // Left arrow button
+            // Left arrow button - direct child of preview panel
             _previewLeftButton = new TextButton
             {
                 Text = "←",
-                Width = 60,
-                Height = 60
+                Width = 50,
+                Height = 50,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Myra.Graphics2D.Thickness(15, 0, 0, 0)
             };
             _previewLeftButton.Click += (s, a) => 
             {
@@ -1153,14 +1240,17 @@ namespace Planet9.Scenes
                 // Switch player ship class to match preview
                 SwitchShipClass(_previewShipIndex);
             };
-            arrowContainer.Widgets.Add(_previewLeftButton);
+            _previewPanel.Widgets.Add(_previewLeftButton);
             
-            // Right arrow button
+            // Right arrow button - direct child of preview panel
             _previewRightButton = new TextButton
             {
                 Text = "→",
-                Width = 60,
-                Height = 60
+                Width = 50,
+                Height = 50,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Myra.Graphics2D.Thickness(0, 0, 15, 0)
             };
             _previewRightButton.Click += (s, a) => 
             {
@@ -1171,18 +1261,17 @@ namespace Planet9.Scenes
                 // Switch player ship class to match preview
                 SwitchShipClass(_previewShipIndex);
             };
-            arrowContainer.Widgets.Add(_previewRightButton);
+            _previewPanel.Widgets.Add(_previewRightButton);
             
-            _previewPanel.Widgets.Add(arrowContainer);
-            
+            // Close button - direct child of preview panel
             var closeButton = new TextButton
             {
                 Text = "Close (P)",
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Bottom,
-                Padding = new Myra.Graphics2D.Thickness(10, 10, 10, 10),
-                Width = 150,
-                Height = 40
+                Margin = new Myra.Graphics2D.Thickness(0, 0, 0, 15),
+                Width = 120,
+                Height = 35
             };
             closeButton.Click += (s, a) => _isPreviewActive = false;
             _previewPanel.Widgets.Add(closeButton);
@@ -1542,12 +1631,12 @@ namespace Planet9.Scenes
                 {
                     
                     // Calculate preview panel position (centered)
-                    int panelX = (GraphicsDevice.Viewport.Width - 700) / 2;
-                    int panelY = (GraphicsDevice.Viewport.Height - 700) / 2;
+                    int panelX = (GraphicsDevice.Viewport.Width - 500) / 2;
+                    int panelY = (GraphicsDevice.Viewport.Height - 500) / 2;
                     
                     // Sprite position in preview (centered in panel)
-                    int spriteX = panelX + 350 - (shipTexture?.Width ?? 0) / 2;
-                    int spriteY = panelY + 350 - (shipTexture?.Height ?? 0) / 2;
+                    int spriteX = panelX + 250 - (shipTexture?.Width ?? 0) / 2;
+                    int spriteY = panelY + 250 - (shipTexture?.Height ?? 0) / 2;
                     
                     // Check if mouse is over sprite
                     if (shipTexture != null && mouseState.X >= spriteX && mouseState.X < spriteX + shipTexture.Width &&
@@ -2004,9 +2093,10 @@ namespace Planet9.Scenes
             foreach (var friendlyShip in _friendlyShips)
             {
                 // Collision avoidance: steer away from nearby ships and player
-                float avoidanceRadius = _avoidanceDetectionRange; // Use slider value for other ships
+                // Use each ship's own avoidance detection range
+                float avoidanceRadius = friendlyShip.AvoidanceDetectionRange; // Use ship's own setting
                 float avoidanceForce = 200f; // How strongly to avoid (pixels per second)
-                float playerAvoidanceRadius = _avoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
+                float playerAvoidanceRadius = friendlyShip.AvoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
                 float playerAvoidanceForce = 300f; // Stronger avoidance for player
                 Vector2 avoidanceVector = Vector2.Zero;
                 
@@ -2040,7 +2130,8 @@ namespace Planet9.Scenes
                     }
                 }
                 
-                // Avoid other friendly ships
+                // Avoid other friendly ships (use the closer ship's avoidance range)
+                const float minSeparationDistance = 50f; // Minimum distance ships should maintain
                 foreach (var otherShip in _friendlyShips)
                 {
                     if (otherShip == friendlyShip) continue;
@@ -2048,10 +2139,22 @@ namespace Planet9.Scenes
                     Vector2 direction = friendlyShip.Position - otherShip.Position;
                     float distance = direction.Length();
                     
-                    if (distance < avoidanceRadius && distance > 0.1f)
+                    // Use the smaller of the two ships' avoidance ranges for detection
+                    float effectiveAvoidanceRadius = Math.Min(avoidanceRadius, otherShip.AvoidanceDetectionRange);
+                    
+                    if (distance < effectiveAvoidanceRadius && distance > 0.1f)
                     {
-                        // Calculate avoidance force (stronger when closer)
+                        // Calculate avoidance force (exponentially stronger when closer)
                         float avoidanceStrength = (avoidanceRadius - distance) / avoidanceRadius;
+                        
+                        // If ships are very close (within min separation), apply much stronger force
+                        if (distance < minSeparationDistance)
+                        {
+                            // Exponential increase in force when very close
+                            float closeFactor = (minSeparationDistance - distance) / minSeparationDistance;
+                            avoidanceStrength = 1f + (closeFactor * closeFactor * 2f); // Up to 3x stronger when very close
+                        }
+                        
                         direction.Normalize();
                         avoidanceVector += direction * avoidanceStrength * avoidanceForce;
                     }
@@ -2064,8 +2167,23 @@ namespace Planet9.Scenes
                     avoidanceVector.Normalize();
                     
                     // Calculate a new target position that curves around the obstacle
-                    // Use a look-ahead distance based on ship speed to allow smooth turning
-                    float lookAheadDistance = friendlyShip.MoveSpeed * 0.5f; // Look ahead 0.5 seconds
+                    // Use a longer look-ahead distance for smoother pathfinding
+                    float lookAheadDistance = friendlyShip.MoveSpeed * 0.8f; // Look ahead 0.8 seconds (increased for smoother paths)
+                    
+                    // Check if ship is very close to another ship (need urgent avoidance)
+                    bool isVeryClose = false;
+                    float closestDistance = float.MaxValue;
+                    foreach (var otherShip in _friendlyShips)
+                    {
+                        if (otherShip == friendlyShip) continue;
+                        float dist = Vector2.Distance(friendlyShip.Position, otherShip.Position);
+                        if (dist < 80f) // Very close threshold
+                        {
+                            isVeryClose = true;
+                            if (dist < closestDistance)
+                                closestDistance = dist;
+                        }
+                    }
                     
                     // If ship is moving, calculate current movement direction from rotation
                     Vector2 newAvoidanceTarget;
@@ -2080,8 +2198,8 @@ namespace Planet9.Scenes
                         );
                         
                         // Blend current movement direction with avoidance direction for smooth turning
-                        // More avoidance when closer, more current direction when further
-                        float blendFactor = 0.5f; // 50% avoidance, 50% current direction (reduced for smoother transitions)
+                        // Increase blend factor when very close to allow faster turning
+                        float blendFactor = isVeryClose ? 0.7f : 0.4f; // 70% avoidance when very close, 40% normally
                         Vector2 blendedDirection = avoidanceVector * blendFactor + currentDirection * (1f - blendFactor);
                         blendedDirection.Normalize();
                         newAvoidanceTarget = friendlyShip.Position + blendedDirection * lookAheadDistance;
@@ -2096,16 +2214,23 @@ namespace Planet9.Scenes
                     Vector2 smoothedTarget;
                     if (_friendlyShipLastAvoidanceTarget.ContainsKey(friendlyShip))
                     {
-                        // Lerp between old and new target for smooth transitions
-                        smoothedTarget = Vector2.Lerp(_friendlyShipLastAvoidanceTarget[friendlyShip], newAvoidanceTarget, 0.3f);
+                        // Use a moderate lerp rate (0.2) for smooth but responsive transitions
+                        smoothedTarget = Vector2.Lerp(_friendlyShipLastAvoidanceTarget[friendlyShip], newAvoidanceTarget, 0.2f);
                     }
                     else
                     {
                         smoothedTarget = newAvoidanceTarget;
                     }
-                    _friendlyShipLastAvoidanceTarget[friendlyShip] = smoothedTarget;
                     
-                    // Update target to curve around obstacle
+                    // Clamp avoidance target to safe bounds to prevent ships from getting stuck at edges
+                    const float safeTargetMargin = 150f;
+                    smoothedTarget = new Vector2(
+                        MathHelper.Clamp(smoothedTarget.X, safeTargetMargin, MapSize - safeTargetMargin),
+                        MathHelper.Clamp(smoothedTarget.Y, safeTargetMargin, MapSize - safeTargetMargin)
+                    );
+                    
+                    // Always update avoidance target to allow smooth turning - the lerp already provides smoothing
+                    _friendlyShipLastAvoidanceTarget[friendlyShip] = smoothedTarget;
                     friendlyShip.SetTargetPosition(smoothedTarget);
                 }
                 else
@@ -2115,16 +2240,152 @@ namespace Planet9.Scenes
                     {
                         _friendlyShipLastAvoidanceTarget.Remove(friendlyShip);
                     }
+                    
+                    // Safety check: If ship is moving toward player (even when not in avoidance range), redirect away
+                    if (_playerShip != null && friendlyShip.IsActivelyMoving())
+                    {
+                        Vector2 shipToPlayer = _playerShip.Position - friendlyShip.Position;
+                        float distToPlayer = shipToPlayer.Length();
+                        float safeDistance = friendlyShip.AvoidanceDetectionRange * 2.5f; // Use ship's own range
+                        
+                        // If getting too close to player, redirect away immediately
+                        if (distToPlayer < safeDistance)
+                        {
+                            // Calculate direction away from player
+                            Vector2 awayFromPlayer = -shipToPlayer;
+                            awayFromPlayer.Normalize();
+                            
+                            // Set a new target well away from player
+                            float redirectDistance = friendlyShip.AvoidanceDetectionRange * 2f; // Use ship's own range
+                            Vector2 redirectTarget = friendlyShip.Position + awayFromPlayer * redirectDistance;
+                            
+                            // Clamp to map bounds
+                            const float targetMargin = 200f;
+                            redirectTarget = new Vector2(
+                                MathHelper.Clamp(redirectTarget.X, targetMargin, MapSize - targetMargin),
+                                MathHelper.Clamp(redirectTarget.Y, targetMargin, MapSize - targetMargin)
+                            );
+                            
+                            friendlyShip.SetTargetPosition(redirectTarget);
+                        }
+                    }
                 }
                 
                 friendlyShip.Update(gameTime);
                 
+                // Track enemy path if enabled
+                if (_enemyPathVisible)
+                {
+                    if (!_friendlyShipPaths.ContainsKey(friendlyShip))
+                    {
+                        _friendlyShipPaths[friendlyShip] = new System.Collections.Generic.List<Vector2>();
+                    }
+                    
+                    var path = _friendlyShipPaths[friendlyShip];
+                    // Add current position to path (only if ship moved significantly)
+                    if (path.Count == 0 || Vector2.Distance(path[path.Count - 1], friendlyShip.Position) > 10f)
+                    {
+                        path.Add(friendlyShip.Position);
+                        // Limit path length
+                        if (path.Count > MaxPathPoints)
+                        {
+                            path.RemoveAt(0);
+                        }
+                    }
+                }
+                
                 // Keep ship within map bounds - clamp position to prevent leaving map
-                const float shipMargin = 100f; // Keep ships at least 100 pixels from edges
-                friendlyShip.Position = new Vector2(
-                    MathHelper.Clamp(friendlyShip.Position.X, shipMargin, MapSize - shipMargin),
-                    MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, MapSize - shipMargin)
-                );
+                const float shipMargin = 30f; // Keep ships at least 30 pixels from edges (reduced further to prevent getting stuck)
+                float clampedX = MathHelper.Clamp(friendlyShip.Position.X, shipMargin, MapSize - shipMargin);
+                float clampedY = MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, MapSize - shipMargin);
+                
+                // Track ship position to detect if it's stuck
+                Vector2 clampedPosition = new Vector2(clampedX, clampedY);
+                bool isStuck = false;
+                
+                if (_friendlyShipLastPosition.ContainsKey(friendlyShip))
+                {
+                    Vector2 lastPos = _friendlyShipLastPosition[friendlyShip];
+                    float distanceMoved = Vector2.Distance(clampedPosition, lastPos);
+                    
+                    // If ship hasn't moved much (less than 5 pixels) in the last frame, it might be stuck
+                    if (distanceMoved < 5f)
+                    {
+                        if (!_friendlyShipStuckTimer.ContainsKey(friendlyShip))
+                        {
+                            _friendlyShipStuckTimer[friendlyShip] = 0f;
+                        }
+                        _friendlyShipStuckTimer[friendlyShip] += deltaTime;
+                        
+                        // If stuck for more than 0.5 seconds, give it a new target
+                        if (_friendlyShipStuckTimer[friendlyShip] > 0.5f)
+                        {
+                            isStuck = true;
+                        }
+                    }
+                    else
+                    {
+                        // Ship is moving, reset stuck timer
+                        if (_friendlyShipStuckTimer.ContainsKey(friendlyShip))
+                        {
+                            _friendlyShipStuckTimer.Remove(friendlyShip);
+                        }
+                    }
+                }
+                
+                _friendlyShipLastPosition[friendlyShip] = clampedPosition;
+                
+                // If ship was clamped or is stuck, give it a new target away from edge
+                bool wasClamped = (friendlyShip.Position.X != clampedX || friendlyShip.Position.Y != clampedY);
+                if ((wasClamped || isStuck) && !friendlyShip.IsActivelyMoving())
+                {
+                    // Ship is stuck near edge - give it a new target well away from edge
+                    float safeMargin = 300f;
+                    Vector2 awayFromEdge = Vector2.Zero;
+                    
+                    // Determine direction away from nearest edge
+                    float distToLeft = clampedX;
+                    float distToRight = MapSize - clampedX;
+                    float distToTop = clampedY;
+                    float distToBottom = MapSize - clampedY;
+                    
+                    float minDist = Math.Min(Math.Min(distToLeft, distToRight), Math.Min(distToTop, distToBottom));
+                    
+                    if (minDist == distToLeft)
+                        awayFromEdge = new Vector2(1f, 0f); // Move right
+                    else if (minDist == distToRight)
+                        awayFromEdge = new Vector2(-1f, 0f); // Move left
+                    else if (minDist == distToTop)
+                        awayFromEdge = new Vector2(0f, 1f); // Move down
+                    else
+                        awayFromEdge = new Vector2(0f, -1f); // Move up
+                    
+                    // Add some randomness to the direction
+                    float randomAngle = (float)(_random.NextDouble() * MathHelper.PiOver2 - MathHelper.PiOver4);
+                    float cos = (float)Math.Cos(randomAngle);
+                    float sin = (float)Math.Sin(randomAngle);
+                    Vector2 rotatedDir = new Vector2(
+                        awayFromEdge.X * cos - awayFromEdge.Y * sin,
+                        awayFromEdge.X * sin + awayFromEdge.Y * cos
+                    );
+                    
+                    // Set target 400-600 pixels away from current position
+                    float targetDistance = (float)(_random.NextDouble() * 200f + 400f);
+                    Vector2 newTarget = clampedPosition + rotatedDir * targetDistance;
+                    
+                    float newTargetX = MathHelper.Clamp(newTarget.X, safeMargin, MapSize - safeMargin);
+                    float newTargetY = MathHelper.Clamp(newTarget.Y, safeMargin, MapSize - safeMargin);
+                    
+                    friendlyShip.SetTargetPosition(new Vector2(newTargetX, newTargetY));
+                    
+                    // Reset stuck timer
+                    if (_friendlyShipStuckTimer.ContainsKey(friendlyShip))
+                    {
+                        _friendlyShipStuckTimer.Remove(friendlyShip);
+                    }
+                }
+                
+                friendlyShip.Position = new Vector2(clampedX, clampedY);
                 
                 // Randomly decide to move or idle, or fly across map
                 // Use a timer-based system instead of random checks every frame for smoother decisions
@@ -2190,6 +2451,7 @@ namespace Planet9.Scenes
                     else
                     {
                         // Normal random movement within map - pick a target in a smooth direction
+                        // But avoid picking targets too close to the player
                         
                         // Calculate a direction based on current position to avoid sudden 180-degree turns
                         Vector2 currentPos = friendlyShip.Position;
@@ -2197,28 +2459,70 @@ namespace Planet9.Scenes
                         Vector2 toCenter = mapCenter - currentPos;
                         toCenter.Normalize();
                         
-                        // Pick a random direction but bias it slightly away from center for more interesting movement
-                        float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
-                        Vector2 randomDirection = new Vector2(
-                            (float)Math.Cos(randomAngle),
-                            (float)Math.Sin(randomAngle)
-                        );
+                        // Try to pick a target that's not too close to the player
+                        Vector2 targetPos;
+                        int attempts = 0;
+                        const int maxAttempts = 10;
+                        float minDistanceFromPlayer = friendlyShip.AvoidanceDetectionRange * 3f; // Don't pick targets within 3x ship's own avoidance range
                         
-                        // Blend random direction with away-from-center direction (70% random, 30% away from center)
-                        Vector2 blendedDirection = randomDirection * 0.7f + toCenter * 0.3f;
-                        blendedDirection.Normalize();
+                        do
+                        {
+                            // Pick a random direction but bias it slightly away from center for more interesting movement
+                            float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
+                            Vector2 randomDirection = new Vector2(
+                                (float)Math.Cos(randomAngle),
+                                (float)Math.Sin(randomAngle)
+                            );
+                            
+                            // Blend random direction with away-from-center direction (70% random, 30% away from center)
+                            Vector2 blendedDirection = randomDirection * 0.7f + toCenter * 0.3f;
+                            
+                            // If player exists, strongly bias direction away from player
+                            if (_playerShip != null)
+                            {
+                                Vector2 awayFromPlayer = currentPos - _playerShip.Position;
+                                float distToPlayer = awayFromPlayer.Length();
+                                if (distToPlayer > 0.1f)
+                                {
+                                    awayFromPlayer.Normalize();
+                                    // Much stronger bias away from player (up to 80% when close)
+                                    float playerBias = MathHelper.Clamp((minDistanceFromPlayer - distToPlayer) / minDistanceFromPlayer, 0f, 0.8f);
+                                    blendedDirection = blendedDirection * (1f - playerBias) + awayFromPlayer * playerBias;
+                                }
+                            }
+                            
+                            blendedDirection.Normalize();
+                            
+                            // Pick a distance (300-800 pixels) for the target
+                            float targetDistance = (float)(_random.NextDouble() * 500f + 300f);
+                            Vector2 targetOffset = blendedDirection * targetDistance;
+                            targetPos = currentPos + targetOffset;
+                            
+                            // Clamp target to map bounds with larger margin to keep targets well within bounds
+                            float targetMargin = 200f; // Keep targets further from edges
+                            targetPos = new Vector2(
+                                MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
+                                MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin)
+                            );
+                            
+                            attempts++;
+                            
+                            // Check if target is too close to player
+                            if (_playerShip != null)
+                            {
+                                float distToPlayer = Vector2.Distance(targetPos, _playerShip.Position);
+                                if (distToPlayer >= minDistanceFromPlayer || attempts >= maxAttempts)
+                                {
+                                    break; // Good target found, or give up after max attempts
+                                }
+                            }
+                            else
+                            {
+                                break; // No player, any target is fine
+                            }
+                        } while (attempts < maxAttempts);
                         
-                        // Pick a distance (300-800 pixels) for the target
-                        float targetDistance = (float)(_random.NextDouble() * 500f + 300f);
-                        Vector2 targetOffset = blendedDirection * targetDistance;
-                        Vector2 targetPos = currentPos + targetOffset;
-                        
-                        // Clamp target to map bounds with larger margin to keep targets well within bounds
-                        float targetMargin = 200f; // Keep targets further from edges
-                        float targetX = MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin);
-                        float targetY = MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin);
-                        
-                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
+                        friendlyShip.SetTargetPosition(targetPos);
                     }
                     
                     // Don't randomly change speed - use saved settings instead
@@ -2401,8 +2705,26 @@ namespace Planet9.Scenes
                 }
             }
             
+            // Draw avoidance range circles if enabled
+            if (_avoidanceRangeVisible)
+            {
+                DrawAvoidanceRange(spriteBatch);
+            }
+            
             // Draw player ship
             _playerShip?.Draw(spriteBatch);
+            
+            // Draw enemy paths if enabled
+            if (_enemyPathVisible)
+            {
+                DrawEnemyPaths(spriteBatch);
+            }
+            
+            // Draw enemy target paths if enabled
+            if (_enemyTargetPathVisible)
+            {
+                DrawEnemyTargetPaths(spriteBatch);
+            }
             
             // Draw friendly ships
             foreach (var friendlyShip in _friendlyShips)
@@ -2478,13 +2800,13 @@ namespace Planet9.Scenes
                 // Draw semi-transparent background
                 var bgTexture = new Texture2D(GraphicsDevice, 1, 1);
                 bgTexture.SetData(new[] { new Color(0, 0, 0, 200) });
-                int panelX = (GraphicsDevice.Viewport.Width - 700) / 2;
-                int panelY = (GraphicsDevice.Viewport.Height - 700) / 2;
-                spriteBatch.Draw(bgTexture, new Rectangle(panelX, panelY, 700, 700), Color.White);
+                int panelX = (GraphicsDevice.Viewport.Width - 500) / 2;
+                int panelY = (GraphicsDevice.Viewport.Height - 500) / 2;
+                spriteBatch.Draw(bgTexture, new Rectangle(panelX, panelY, 500, 500), Color.White);
                 
                 // Draw ship sprite centered in preview panel
-                int spriteX = panelX + 350 - (shipTexture?.Width ?? 0) / 2;
-                int spriteY = panelY + 350 - (shipTexture?.Height ?? 0) / 2;
+                int spriteX = panelX + 250 - (shipTexture?.Width ?? 0) / 2;
+                int spriteY = panelY + 250 - (shipTexture?.Height ?? 0) / 2;
                 
                 // Draw box around sprite
                 if (_gridPixelTexture != null && shipTexture != null)
@@ -2706,6 +3028,21 @@ namespace Planet9.Scenes
                         _avoidanceDetectionRange = MathHelper.Clamp(avoidanceRange, 100f, 1000f);
                         if (_avoidanceRangeSlider != null) _avoidanceRangeSlider.Value = _avoidanceDetectionRange;
                         if (_avoidanceRangeLabel != null) _avoidanceRangeLabel.Text = $"Avoidance Detection Range: {_avoidanceDetectionRange:F0}";
+                        
+                        // Apply to ships based on current ship class
+                        if (_currentShipClassIndex == 1)
+                        {
+                            // FriendlyShip class - update all friendly ships
+                            foreach (var friendlyShip in _friendlyShips)
+                            {
+                                friendlyShip.AvoidanceDetectionRange = _avoidanceDetectionRange;
+                            }
+                        }
+                        else if (_playerShip != null)
+                        {
+                            // PlayerShip class - update player ship
+                            _playerShip.AvoidanceDetectionRange = _avoidanceDetectionRange;
+                        }
                     }
                     
                     // Load ship idle rate
@@ -2967,6 +3304,144 @@ namespace Planet9.Scenes
             }
             catch { }
             base.UnloadContent();
+        }
+        
+        private void DrawAvoidanceRange(SpriteBatch spriteBatch)
+        {
+            if (_gridPixelTexture == null) return;
+            
+            // Draw avoidance range circle for player ship (use player's own range)
+            if (_playerShip != null)
+            {
+                float playerRadius = _playerShip.AvoidanceDetectionRange * 1.33f; // Player avoidance radius (33% larger)
+                DrawCircle(spriteBatch, _playerShip.Position, playerRadius, new Color(255, 100, 100, 100)); // Red tint for player
+            }
+            
+            // Draw avoidance range circles for friendly ships (use each ship's own range)
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                float radius = friendlyShip.AvoidanceDetectionRange; // Use ship's own avoidance range
+                DrawCircle(spriteBatch, friendlyShip.Position, radius, new Color(100, 255, 100, 100)); // Green tint for friendly
+            }
+        }
+        
+        private void DrawEnemyPaths(SpriteBatch spriteBatch)
+        {
+            if (_gridPixelTexture == null) return;
+            
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                if (!_friendlyShipPaths.ContainsKey(friendlyShip) || _friendlyShipPaths[friendlyShip].Count < 2)
+                    continue;
+                
+                var path = _friendlyShipPaths[friendlyShip];
+                Color pathColor = new Color(255, 100, 100, 150); // Semi-transparent red for enemy paths
+                
+                // Draw path as connected lines
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    Vector2 start = path[i];
+                    Vector2 end = path[i + 1];
+                    
+                    Vector2 direction = end - start;
+                    float length = direction.Length();
+                    if (length > 0.1f)
+                    {
+                        float rotation = (float)System.Math.Atan2(direction.Y, direction.X);
+                        spriteBatch.Draw(
+                            _gridPixelTexture,
+                            start,
+                            null,
+                            pathColor,
+                            rotation,
+                            new Vector2(0, 0.5f),
+                            new Vector2(length, 1f), // 1 pixel thick line
+                            SpriteEffects.None,
+                            0f
+                        );
+                    }
+                }
+            }
+        }
+        
+        private void DrawEnemyTargetPaths(SpriteBatch spriteBatch)
+        {
+            if (_gridPixelTexture == null) return;
+            
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                Vector2 currentPos = friendlyShip.Position;
+                Vector2 targetPos = friendlyShip.TargetPosition;
+                
+                // Only draw if ship is moving and target is different from current position
+                if (Vector2.Distance(currentPos, targetPos) > 1f)
+                {
+                    Vector2 direction = targetPos - currentPos;
+                    float length = direction.Length();
+                    
+                    if (length > 0.1f)
+                    {
+                        float rotation = (float)System.Math.Atan2(direction.Y, direction.X);
+                        Color pathColor = new Color(255, 200, 0, 200); // Semi-transparent yellow/orange for target paths
+                        
+                        spriteBatch.Draw(
+                            _gridPixelTexture,
+                            currentPos,
+                            null,
+                            pathColor,
+                            rotation,
+                            new Vector2(0, 0.5f),
+                            new Vector2(length, 2f), // 2 pixel thick line
+                            SpriteEffects.None,
+                            0f
+                        );
+                        
+                        // Draw a small circle at the target position
+                        DrawCircle(spriteBatch, targetPos, 5f, new Color(255, 200, 0, 255)); // Yellow circle at target
+                    }
+                }
+            }
+        }
+        
+        private void DrawCircle(SpriteBatch spriteBatch, Vector2 center, float radius, Color color)
+        {
+            if (_gridPixelTexture == null) return;
+            
+            const int segments = 64; // Number of line segments to approximate circle
+            float angleStep = MathHelper.TwoPi / segments;
+            
+            for (int i = 0; i < segments; i++)
+            {
+                float angle1 = i * angleStep;
+                float angle2 = (i + 1) * angleStep;
+                
+                Vector2 point1 = center + new Vector2(
+                    (float)Math.Cos(angle1) * radius,
+                    (float)Math.Sin(angle1) * radius
+                );
+                Vector2 point2 = center + new Vector2(
+                    (float)Math.Cos(angle2) * radius,
+                    (float)Math.Sin(angle2) * radius
+                );
+                
+                Vector2 direction = point2 - point1;
+                float length = direction.Length();
+                if (length > 0.1f)
+                {
+                    float rotation = (float)Math.Atan2(direction.Y, direction.X);
+                    spriteBatch.Draw(
+                        _gridPixelTexture,
+                        point1,
+                        null,
+                        color,
+                        rotation,
+                        new Vector2(0, 0.5f),
+                        new Vector2(length, 2f),
+                        SpriteEffects.None,
+                        0f
+                    );
+                }
+            }
         }
     }
 }

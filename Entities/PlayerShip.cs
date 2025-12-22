@@ -11,19 +11,20 @@ namespace Planet9.Entities
         protected GraphicsDevice _graphicsDevice;
         protected ContentManager _content;
         private const int ShipSize = 128;
-        private Vector2 _targetPosition;
+        protected Vector2 _targetPosition;
         public float MoveSpeed { get; set; } = 300f; // pixels per second
-        public float RotationSpeed { get; set; } = 5f; // radians per second (for movement)
-        public float AimRotationSpeed { get; set; } = 5f; // radians per second (for aiming at cursor when stationary)
+        public float RotationSpeed { get; set; } = 3f; // radians per second (for movement) - reduced for smoother turning
+        public float AimRotationSpeed { get; set; } = 3f; // radians per second (for aiming at cursor when stationary) - reduced for smoother turning
         public float Inertia { get; set; } = 0.9f; // Inertia/damping factor (0-1, higher = more inertia)
         public float Drift { get; set; } = 0f; // Drift amount when idle (0 = no drift, higher = more random direction drift)
-        private bool _isMoving = false;
-        private Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
-        private Vector2? _aimTarget = null; // Target position to aim at when not moving
-        private EngineTrail? _engineTrail;
-        private System.Random _driftRandom = new System.Random(); // Random for drift direction
-        private float _driftDirection = 0f; // Current drift direction in radians
-        private float _driftDirectionChangeTimer = 0f; // Timer for changing drift direction
+        public float AvoidanceDetectionRange { get; set; } = 300f; // Avoidance detection range for this ship
+        protected bool _isMoving = false;
+        protected Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
+        protected Vector2? _aimTarget = null; // Target position to aim at when not moving
+        protected EngineTrail? _engineTrail;
+        protected System.Random _driftRandom = new System.Random(); // Random for drift direction
+        protected float _driftDirection = 0f; // Current drift direction in radians
+        protected float _driftDirectionChangeTimer = 0f; // Timer for changing drift direction
 
         public PlayerShip(GraphicsDevice graphicsDevice, ContentManager content)
         {
@@ -34,6 +35,8 @@ namespace Planet9.Entities
             LoadTexture();
             _engineTrail = new EngineTrail(_graphicsDevice);
         }
+        
+        public Vector2 TargetPosition => _targetPosition; // Public property to access target position
         
         public void SetTargetPosition(Vector2 target)
         {
@@ -149,9 +152,6 @@ namespace Planet9.Entities
                     // But we need to add Pi to flip it if it's backwards
                     float targetRotation = (float)Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
                     
-                    // Smoothly rotate towards target direction
-                    float rotationDelta = RotationSpeed * deltaTime;
-                    
                     // Calculate shortest rotation path
                     float angleDiff = targetRotation - Rotation;
                     
@@ -161,15 +161,26 @@ namespace Planet9.Entities
                     while (angleDiff < -MathHelper.Pi)
                         angleDiff += MathHelper.TwoPi;
                     
-                    // Rotate towards target
-                    if (Math.Abs(angleDiff) < rotationDelta)
+                    // Only turn if the angle difference is significant (ships travel longer before turning)
+                    // Minimum angle threshold: ~30 degrees (0.52 radians) before starting to turn
+                    const float minTurnAngle = 0.52f; // ~30 degrees
+                    
+                    if (Math.Abs(angleDiff) > minTurnAngle)
                     {
-                        Rotation = targetRotation;
+                        // Smoothly rotate towards target direction (reduced for less aggressive turning)
+                        float rotationDelta = RotationSpeed * deltaTime * 0.8f; // 20% reduction for smoother turning
+                        
+                        // Rotate towards target
+                        if (Math.Abs(angleDiff) < rotationDelta)
+                        {
+                            Rotation = targetRotation;
+                        }
+                        else
+                        {
+                            Rotation += Math.Sign(angleDiff) * rotationDelta;
+                        }
                     }
-                    else
-                    {
-                        Rotation += Math.Sign(angleDiff) * rotationDelta;
-                    }
+                    // If angle difference is small, continue forward without turning
                     
                     // Calculate desired velocity towards target
                     direction.Normalize();
@@ -247,8 +258,8 @@ namespace Planet9.Entities
                         // Calculate target rotation to face aim direction
                         float targetRotation = (float)Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
                         
-                        // Smoothly rotate towards target direction using aim rotation speed
-                        float rotationDelta = AimRotationSpeed * deltaTime;
+                        // Smoothly rotate towards target direction using aim rotation speed (reduced for smoother turning)
+                        float rotationDelta = AimRotationSpeed * deltaTime * 0.8f; // 20% reduction for smoother turning
                         
                         // Calculate shortest rotation path
                         float angleDiff = targetRotation - Rotation;

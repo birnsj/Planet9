@@ -43,6 +43,11 @@
 /processor:TextureProcessor
 /build:cursor1.png
 
+#begin png/mainmenubackground.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:mainmenubackground.png
+
 #begin ogg/galaxy1.ogg
 /importer:OggImporter
 /processor:SoundEffectProcessor

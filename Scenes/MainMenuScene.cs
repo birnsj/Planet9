@@ -16,6 +16,7 @@ namespace Planet9.Scenes
         private Label? _subtitleLabel;
         private Label? _instructionsLabel;
         private SoundEffectInstance? _menuMusicInstance;
+        private Texture2D? _backgroundTexture;
 
         public MainMenuScene(Game game) : base(game)
         {
@@ -87,6 +88,29 @@ namespace Planet9.Scenes
             _desktop.Root = grid;
             _previousKeyboardState = Keyboard.GetState();
             
+            // Load main menu background image
+            try
+            {
+                _backgroundTexture = Content.Load<Texture2D>("mainmenubackground");
+                System.Console.WriteLine($"[MENU] Main menu background loaded: {_backgroundTexture?.Width}x{_backgroundTexture?.Height}");
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"[MENU ERROR] Failed to load main menu background: {ex.Message}");
+                System.Console.WriteLine($"[MENU ERROR] Please ensure 'mainmenubackground.png' exists in Content/png/ and Content.mgcb includes it");
+                // Try fallback to galaxy texture if available
+                try
+                {
+                    _backgroundTexture = Content.Load<Texture2D>("galaxy");
+                    System.Console.WriteLine($"[MENU] Using galaxy texture as fallback background");
+                }
+                catch
+                {
+                    System.Console.WriteLine($"[MENU ERROR] Fallback texture also failed, using solid color");
+                    _backgroundTexture = null;
+                }
+            }
+            
             // Load and play main menu music
             try
             {
@@ -127,7 +151,7 @@ namespace Planet9.Scenes
             // Update Myra input
             _desktop?.UpdateInput();
 
-            // Check for Space bar press (not held down) to start game immediately
+            // Check for Space bar press (not held down) to start game
             if (keyboardState.IsKeyDown(Keys.Space) && !_previousKeyboardState.IsKeyDown(Keys.Space))
             {
                 // Transition to game scene immediately on Space press
@@ -146,9 +170,45 @@ namespace Planet9.Scenes
 
         public override void Draw(GameTime gameTime, SpriteBatch spriteBatch)
         {
-            GraphicsDevice.Clear(Color.Navy);
+            GraphicsDevice.Clear(Color.Black);
 
-            // Render Myra UI
+            spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp, DepthStencilState.None, RasterizerState.CullNone);
+            
+            // Draw background image if loaded, otherwise use solid color
+            if (_backgroundTexture != null)
+            {
+                // Calculate scale to fill screen while maintaining aspect ratio
+                float scaleX = (float)GraphicsDevice.Viewport.Width / _backgroundTexture.Width;
+                float scaleY = (float)GraphicsDevice.Viewport.Height / _backgroundTexture.Height;
+                float scale = Math.Max(scaleX, scaleY); // Use larger scale to fill screen
+                
+                // Calculate position to center the image
+                float scaledWidth = _backgroundTexture.Width * scale;
+                float scaledHeight = _backgroundTexture.Height * scale;
+                float x = (GraphicsDevice.Viewport.Width - scaledWidth) / 2f;
+                float y = (GraphicsDevice.Viewport.Height - scaledHeight) / 2f;
+                
+                spriteBatch.Draw(
+                    _backgroundTexture,
+                    new Vector2(x, y),
+                    null,
+                    Color.White,
+                    0f,
+                    Vector2.Zero,
+                    scale,
+                    SpriteEffects.None,
+                    0f
+                );
+            }
+            else
+            {
+                // Fallback: draw a gradient or use galaxy texture if available
+                System.Console.WriteLine("[MENU] Background texture is null, using black background");
+            }
+            
+            spriteBatch.End();
+
+            // Render Myra UI on top
             _desktop?.Render();
         }
         
