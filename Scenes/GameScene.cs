@@ -11,6 +11,14 @@ using Planet9.Entities;
 
 namespace Planet9.Scenes
 {
+    public enum FriendlyShipBehavior
+    {
+        Idle,           // Ship stays in place, may drift slightly
+        Patrol,         // Ship moves in a small area, patrolling
+        LongDistance,    // Ship flies long distance across the map
+        Wander          // Ship moves randomly within map bounds
+    }
+    
     public class GameScene : Scene
     {
         private Texture2D? _galaxyTexture;
@@ -44,13 +52,25 @@ namespace Planet9.Scenes
         
         // Friendly ships
         private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
-        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipDecisionTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, FriendlyShipBehavior> _friendlyShipBehaviors = new System.Collections.Generic.Dictionary<FriendlyShip, FriendlyShipBehavior>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipBehaviorTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>(); // Timer for current behavior
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastAvoidanceTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastPosition = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipStuckTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
         private System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>> _friendlyShipPaths = new System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>>();
+        private System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>> _friendlyShipPatrolPoints = new System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>>(); // Patrol waypoints
         private const int MaxPathPoints = 100; // Maximum number of path points to store per ship
         private System.Random _random = new System.Random();
+        
+        // Behavior duration ranges (in seconds)
+        private const float IdleMinDuration = 3f;
+        private const float IdleMaxDuration = 8f;
+        private const float PatrolMinDuration = 10f;
+        private const float PatrolMaxDuration = 30f;
+        private const float LongDistanceMinDuration = 20f;
+        private const float LongDistanceMaxDuration = 60f;
+        private const float WanderMinDuration = 5f;
+        private const float WanderMaxDuration = 15f;
         
         // Lasers
         private System.Collections.Generic.List<Laser> _lasers = new System.Collections.Generic.List<Laser>();
@@ -143,17 +163,17 @@ namespace Planet9.Scenes
 
         public override void LoadContent()
         {
-            // Load galaxy texture
+            // Load galaxy tile texture
             try
             {
-                _galaxyTexture = Content.Load<Texture2D>("galaxy");
+                _galaxyTexture = Content.Load<Texture2D>("galaxytile");
                 
                 // Use original texture size for tiles (no scaling)
                 _tileSize = new Vector2(_galaxyTexture.Width, _galaxyTexture.Height);
             }
             catch (System.Exception ex)
             {
-                System.Console.WriteLine($"Failed to load galaxy texture: {ex.Message}");
+                System.Console.WriteLine($"Failed to load galaxy tile texture: {ex.Message}");
             }
             
             // Load and play background music
@@ -277,6 +297,9 @@ namespace Planet9.Scenes
             for (int i = 0; i < 8; i++)
             {
                 var friendlyShip = new FriendlyShip(GraphicsDevice, Content);
+                // Initialize behavior system
+                _friendlyShipBehaviors[friendlyShip] = GetRandomBehavior();
+                _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(_friendlyShipBehaviors[friendlyShip]);
                 // Random position within map bounds (with some margin from edges)
                 float margin = 500f;
                 float x = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
@@ -2089,7 +2112,7 @@ namespace Planet9.Scenes
             }
             // If neither WASD nor spacebar and not following, camera stays where it is
             
-            // Update friendly ships with collision avoidance (including player)
+            // Update friendly ships with collision avoidance (including player) and behavior system
             foreach (var friendlyShip in _friendlyShips)
             {
                 // Collision avoidance: steer away from nearby ships and player
@@ -2385,156 +2408,13 @@ namespace Planet9.Scenes
                     }
                 }
                 
+                // Behavior system: Update and execute current behavior
+                UpdateFriendlyShipBehavior(friendlyShip, deltaTime);
+                
+                // Clamp position AFTER behavior system (in case behavior teleported ship off-screen)
+                clampedX = MathHelper.Clamp(friendlyShip.Position.X, shipMargin, MapSize - shipMargin);
+                clampedY = MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, MapSize - shipMargin);
                 friendlyShip.Position = new Vector2(clampedX, clampedY);
-                
-                // Randomly decide to move or idle, or fly across map
-                // Use a timer-based system instead of random checks every frame for smoother decisions
-                if (!_friendlyShipDecisionTimer.ContainsKey(friendlyShip))
-                {
-                    // Initialize decision timer with random value (2-8 seconds)
-                    _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
-                }
-                
-                // Decrement timer
-                _friendlyShipDecisionTimer[friendlyShip] -= deltaTime;
-                
-                // Make decision when timer expires
-                if (!friendlyShip.IsActivelyMoving() && _friendlyShipDecisionTimer[friendlyShip] <= 0f)
-                {
-                    // Reset timer for next decision (2-8 seconds)
-                    _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
-                    
-                    // Check if ship should idle based on idle rate setting
-                    if (_random.NextDouble() < _shipIdleRate)
-                    {
-                        // Ship should idle - don't set a new target, let it stay idle
-                        // Ships will naturally stop moving when they reach their current target
-                    }
-                    else if (_random.NextDouble() < 0.3f)
-                    {
-                        // 30% chance to fly across the whole map (edge to edge)
-                        // Pick a random edge to start from and opposite edge to fly to
-                        int startEdge = _random.Next(4); // 0=top, 1=right, 2=bottom, 3=left
-                        float startX, startY, targetX, targetY;
-                        
-                        switch (startEdge)
-                        {
-                            case 0: // Top edge
-                                startX = (float)(_random.NextDouble() * MapSize);
-                                startY = -200f;
-                                targetX = startX;
-                                targetY = MapSize + 200f; // Bottom edge
-                                break;
-                            case 1: // Right edge
-                                startX = MapSize + 200f;
-                                startY = (float)(_random.NextDouble() * MapSize);
-                                targetX = -200f; // Left edge
-                                targetY = startY;
-                                break;
-                            case 2: // Bottom edge
-                                startX = (float)(_random.NextDouble() * MapSize);
-                                startY = MapSize + 200f;
-                                targetX = startX;
-                                targetY = -200f; // Top edge
-                                break;
-                            default: // Left edge
-                                startX = -200f;
-                                startY = (float)(_random.NextDouble() * MapSize);
-                                targetX = MapSize + 200f; // Right edge
-                                targetY = startY;
-                                break;
-                        }
-                        
-                        friendlyShip.Position = new Vector2(startX, startY);
-                        friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
-                    }
-                    else
-                    {
-                        // Normal random movement within map - pick a target in a smooth direction
-                        // But avoid picking targets too close to the player
-                        
-                        // Calculate a direction based on current position to avoid sudden 180-degree turns
-                        Vector2 currentPos = friendlyShip.Position;
-                        Vector2 mapCenter = new Vector2(MapSize / 2f, MapSize / 2f);
-                        Vector2 toCenter = mapCenter - currentPos;
-                        toCenter.Normalize();
-                        
-                        // Try to pick a target that's not too close to the player
-                        Vector2 targetPos;
-                        int attempts = 0;
-                        const int maxAttempts = 10;
-                        float minDistanceFromPlayer = friendlyShip.AvoidanceDetectionRange * 3f; // Don't pick targets within 3x ship's own avoidance range
-                        
-                        do
-                        {
-                            // Pick a random direction but bias it slightly away from center for more interesting movement
-                            float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
-                            Vector2 randomDirection = new Vector2(
-                                (float)Math.Cos(randomAngle),
-                                (float)Math.Sin(randomAngle)
-                            );
-                            
-                            // Blend random direction with away-from-center direction (70% random, 30% away from center)
-                            Vector2 blendedDirection = randomDirection * 0.7f + toCenter * 0.3f;
-                            
-                            // If player exists, strongly bias direction away from player
-                            if (_playerShip != null)
-                            {
-                                Vector2 awayFromPlayer = currentPos - _playerShip.Position;
-                                float distToPlayer = awayFromPlayer.Length();
-                                if (distToPlayer > 0.1f)
-                                {
-                                    awayFromPlayer.Normalize();
-                                    // Much stronger bias away from player (up to 80% when close)
-                                    float playerBias = MathHelper.Clamp((minDistanceFromPlayer - distToPlayer) / minDistanceFromPlayer, 0f, 0.8f);
-                                    blendedDirection = blendedDirection * (1f - playerBias) + awayFromPlayer * playerBias;
-                                }
-                            }
-                            
-                            blendedDirection.Normalize();
-                            
-                            // Pick a distance (300-800 pixels) for the target
-                            float targetDistance = (float)(_random.NextDouble() * 500f + 300f);
-                            Vector2 targetOffset = blendedDirection * targetDistance;
-                            targetPos = currentPos + targetOffset;
-                            
-                            // Clamp target to map bounds with larger margin to keep targets well within bounds
-                            float targetMargin = 200f; // Keep targets further from edges
-                            targetPos = new Vector2(
-                                MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
-                                MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin)
-                            );
-                            
-                            attempts++;
-                            
-                            // Check if target is too close to player
-                            if (_playerShip != null)
-                            {
-                                float distToPlayer = Vector2.Distance(targetPos, _playerShip.Position);
-                                if (distToPlayer >= minDistanceFromPlayer || attempts >= maxAttempts)
-                                {
-                                    break; // Good target found, or give up after max attempts
-                                }
-                            }
-                            else
-                            {
-                                break; // No player, any target is fine
-                            }
-                        } while (attempts < maxAttempts);
-                        
-                        friendlyShip.SetTargetPosition(targetPos);
-                    }
-                    
-                    // Don't randomly change speed - use saved settings instead
-                }
-                else if (friendlyShip.IsActivelyMoving())
-                {
-                    // Reset decision timer when ship starts moving (so it doesn't make decisions while moving)
-                    if (_friendlyShipDecisionTimer.ContainsKey(friendlyShip))
-                    {
-                        _friendlyShipDecisionTimer[friendlyShip] = (float)(_random.NextDouble() * 6f + 2f);
-                    }
-                }
             }
             
             // Update lasers
@@ -2578,6 +2458,289 @@ namespace Planet9.Scenes
             _previousKeyboardState = keyboardState;
         }
 
+        // ========== Behavior System Methods ==========
+        
+        private FriendlyShipBehavior GetRandomBehavior()
+        {
+            // Weight behaviors: 30% Idle, 25% Patrol, 20% LongDistance, 25% Wander
+            double roll = _random.NextDouble();
+            if (roll < _shipIdleRate)
+                return FriendlyShipBehavior.Idle;
+            else if (roll < _shipIdleRate + 0.25f)
+                return FriendlyShipBehavior.Patrol;
+            else if (roll < _shipIdleRate + 0.45f)
+                return FriendlyShipBehavior.LongDistance;
+            else
+                return FriendlyShipBehavior.Wander;
+        }
+        
+        private float GetBehaviorDuration(FriendlyShipBehavior behavior)
+        {
+            switch (behavior)
+            {
+                case FriendlyShipBehavior.Idle:
+                    return (float)(_random.NextDouble() * (IdleMaxDuration - IdleMinDuration) + IdleMinDuration);
+                case FriendlyShipBehavior.Patrol:
+                    return (float)(_random.NextDouble() * (PatrolMaxDuration - PatrolMinDuration) + PatrolMinDuration);
+                case FriendlyShipBehavior.LongDistance:
+                    return (float)(_random.NextDouble() * (LongDistanceMaxDuration - LongDistanceMinDuration) + LongDistanceMinDuration);
+                case FriendlyShipBehavior.Wander:
+                    return (float)(_random.NextDouble() * (WanderMaxDuration - WanderMinDuration) + WanderMinDuration);
+                default:
+                    return 5f;
+            }
+        }
+        
+        private void UpdateFriendlyShipBehavior(FriendlyShip friendlyShip, float deltaTime)
+        {
+            // Initialize behavior if not set
+            if (!_friendlyShipBehaviors.ContainsKey(friendlyShip))
+            {
+                _friendlyShipBehaviors[friendlyShip] = GetRandomBehavior();
+                _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(_friendlyShipBehaviors[friendlyShip]);
+            }
+            
+            // Decrement behavior timer
+            if (_friendlyShipBehaviorTimer.ContainsKey(friendlyShip))
+            {
+                _friendlyShipBehaviorTimer[friendlyShip] -= deltaTime;
+                
+                // Check if behavior should transition
+                if (_friendlyShipBehaviorTimer[friendlyShip] <= 0f)
+                {
+                    // Transition to new behavior
+                    _friendlyShipBehaviors[friendlyShip] = GetRandomBehavior();
+                    _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(_friendlyShipBehaviors[friendlyShip]);
+                }
+            }
+            
+            // Execute current behavior
+            FriendlyShipBehavior currentBehavior = _friendlyShipBehaviors[friendlyShip];
+            
+            // Only execute behavior if ship is not actively moving (reached target) or if behavior requires immediate action
+            if (!friendlyShip.IsActivelyMoving() || currentBehavior == FriendlyShipBehavior.LongDistance)
+            {
+                switch (currentBehavior)
+                {
+                    case FriendlyShipBehavior.Idle:
+                        ExecuteIdleBehavior(friendlyShip);
+                        break;
+                    case FriendlyShipBehavior.Patrol:
+                        ExecutePatrolBehavior(friendlyShip);
+                        break;
+                    case FriendlyShipBehavior.LongDistance:
+                        ExecuteLongDistanceBehavior(friendlyShip);
+                        break;
+                    case FriendlyShipBehavior.Wander:
+                        ExecuteWanderBehavior(friendlyShip);
+                        break;
+                }
+            }
+        }
+        
+        private void ExecuteIdleBehavior(FriendlyShip friendlyShip)
+        {
+            // Idle: Ship stays in place, no target set
+            // Ship will naturally stop when it reaches its current target
+            // No action needed - ship will drift if drift is enabled
+        }
+        
+        private void ExecutePatrolBehavior(FriendlyShip friendlyShip)
+        {
+            // Patrol: Ship moves between waypoints in a small area
+            if (!_friendlyShipPatrolPoints.ContainsKey(friendlyShip) || _friendlyShipPatrolPoints[friendlyShip].Count == 0)
+            {
+                // Initialize patrol points around current position
+                InitializePatrolPoints(friendlyShip);
+            }
+            
+            var patrolPoints = _friendlyShipPatrolPoints[friendlyShip];
+            
+            // If ship reached current target, move to next patrol point
+            if (!friendlyShip.IsActivelyMoving())
+            {
+                // Find next patrol point (cycle through them)
+                Vector2 currentPos = friendlyShip.Position;
+                int closestIndex = 0;
+                float closestDist = float.MaxValue;
+                
+                for (int i = 0; i < patrolPoints.Count; i++)
+                {
+                    float dist = Vector2.Distance(currentPos, patrolPoints[i]);
+                    if (dist < closestDist)
+                    {
+                        closestDist = dist;
+                        closestIndex = i;
+                    }
+                }
+                
+                // Move to next point in sequence
+                int nextIndex = (closestIndex + 1) % patrolPoints.Count;
+                friendlyShip.SetTargetPosition(patrolPoints[nextIndex]);
+            }
+        }
+        
+        private void InitializePatrolPoints(FriendlyShip friendlyShip)
+        {
+            // Create 3-5 patrol waypoints in a circular pattern around current position
+            Vector2 center = friendlyShip.Position;
+            int numPoints = _random.Next(3, 6); // 3-5 points
+            float patrolRadius = (float)(_random.NextDouble() * 400f + 300f); // 300-700 pixel radius
+            
+            var points = new System.Collections.Generic.List<Vector2>();
+            for (int i = 0; i < numPoints; i++)
+            {
+                float angle = (float)(i * MathHelper.TwoPi / numPoints + _random.NextDouble() * 0.5f); // Add some randomness
+                Vector2 point = center + new Vector2(
+                    (float)Math.Cos(angle) * patrolRadius,
+                    (float)Math.Sin(angle) * patrolRadius
+                );
+                
+                // Clamp to map bounds
+                const float margin = 200f;
+                point = new Vector2(
+                    MathHelper.Clamp(point.X, margin, MapSize - margin),
+                    MathHelper.Clamp(point.Y, margin, MapSize - margin)
+                );
+                
+                points.Add(point);
+            }
+            
+            _friendlyShipPatrolPoints[friendlyShip] = points;
+        }
+        
+        private void ExecuteLongDistanceBehavior(FriendlyShip friendlyShip)
+        {
+            // LongDistance: Ship flies across the map edge to edge
+            if (!friendlyShip.IsActivelyMoving())
+            {
+                // Pick a random edge to start from and opposite edge to fly to
+                int startEdge = _random.Next(4); // 0=top, 1=right, 2=bottom, 3=left
+                float startX, startY, targetX, targetY;
+                
+                switch (startEdge)
+                {
+                    case 0: // Top edge
+                        startX = (float)(_random.NextDouble() * MapSize);
+                        startY = -200f;
+                        targetX = startX;
+                        targetY = MapSize + 200f; // Bottom edge
+                        break;
+                    case 1: // Right edge
+                        startX = MapSize + 200f;
+                        startY = (float)(_random.NextDouble() * MapSize);
+                        targetX = -200f; // Left edge
+                        targetY = startY;
+                        break;
+                    case 2: // Bottom edge
+                        startX = (float)(_random.NextDouble() * MapSize);
+                        startY = MapSize + 200f;
+                        targetX = startX;
+                        targetY = -200f; // Top edge
+                        break;
+                    default: // Left edge
+                        startX = -200f;
+                        startY = (float)(_random.NextDouble() * MapSize);
+                        targetX = MapSize + 200f; // Right edge
+                        targetY = startY;
+                        break;
+                }
+                
+                // Clamp start position to map bounds (with small margin for edge starts)
+                const float edgeMargin = 50f;
+                startX = MathHelper.Clamp(startX, -edgeMargin, MapSize + edgeMargin);
+                startY = MathHelper.Clamp(startY, -edgeMargin, MapSize + edgeMargin);
+                
+                friendlyShip.Position = new Vector2(startX, startY);
+                friendlyShip.SetTargetPosition(new Vector2(targetX, targetY));
+            }
+        }
+        
+        private void ExecuteWanderBehavior(FriendlyShip friendlyShip)
+        {
+            // Wander: Ship moves randomly within map bounds, avoiding center and player
+            if (!friendlyShip.IsActivelyMoving())
+            {
+                Vector2 currentPos = friendlyShip.Position;
+                Vector2 mapCenter = new Vector2(MapSize / 2f, MapSize / 2f);
+                Vector2 toCenter = mapCenter - currentPos;
+                float distanceToCenter = toCenter.Length();
+                toCenter.Normalize();
+                
+                Vector2 targetPos;
+                int attempts = 0;
+                const int maxAttempts = 10;
+                float minDistanceFromPlayer = friendlyShip.AvoidanceDetectionRange * 3f;
+                const float minDistanceFromCenter = 1000f;
+                
+                do
+                {
+                    float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
+                    Vector2 randomDirection = new Vector2(
+                        (float)Math.Cos(randomAngle),
+                        (float)Math.Sin(randomAngle)
+                    );
+                    
+                    float centerBiasStrength = MathHelper.Clamp(1f - (distanceToCenter / (MapSize * 0.3f)), 0.3f, 0.8f);
+                    Vector2 awayFromCenter = -toCenter;
+                    Vector2 blendedDirection = randomDirection * (1f - centerBiasStrength) + awayFromCenter * centerBiasStrength;
+                    
+                    if (_playerShip != null)
+                    {
+                        Vector2 awayFromPlayer = currentPos - _playerShip.Position;
+                        float distToPlayer = awayFromPlayer.Length();
+                        if (distToPlayer > 0.1f)
+                        {
+                            awayFromPlayer.Normalize();
+                            float playerBias = MathHelper.Clamp((minDistanceFromPlayer - distToPlayer) / minDistanceFromPlayer, 0f, 0.8f);
+                            blendedDirection = blendedDirection * (1f - playerBias) + awayFromPlayer * playerBias;
+                        }
+                    }
+                    
+                    blendedDirection.Normalize();
+                    float targetDistance = (float)(_random.NextDouble() * 500f + 300f);
+                    Vector2 targetOffset = blendedDirection * targetDistance;
+                    targetPos = currentPos + targetOffset;
+                    
+                    const float targetMargin = 200f;
+                    targetPos = new Vector2(
+                        MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
+                        MathHelper.Clamp(targetPos.Y, targetMargin, MapSize - targetMargin)
+                    );
+                    
+                    attempts++;
+                    
+                    float distToCenter = Vector2.Distance(targetPos, mapCenter);
+                    if (distToCenter < minDistanceFromCenter)
+                    {
+                        if (attempts < maxAttempts)
+                            continue;
+                    }
+                    
+                    if (_playerShip != null)
+                    {
+                        float distToPlayer = Vector2.Distance(targetPos, _playerShip.Position);
+                        if (distToPlayer >= minDistanceFromPlayer && distToCenter >= minDistanceFromCenter)
+                        {
+                            break;
+                        }
+                        else if (attempts >= maxAttempts)
+                        {
+                            break;
+                        }
+                    }
+                    else if (distToCenter >= minDistanceFromCenter)
+                    {
+                        break;
+                    }
+                } while (attempts < maxAttempts);
+                
+                friendlyShip.SetTargetPosition(targetPos);
+            }
+        }
+        
+        // ========== End Behavior System Methods ==========
+        
         public override void Draw(GameTime gameTime, SpriteBatch spriteBatch)
         {
             GraphicsDevice.Clear(Color.Black);
@@ -2600,20 +2763,20 @@ namespace Planet9.Scenes
                 transform
             );
 
-            // Draw galaxy texture in 2x2 tile pattern
+            // Draw galaxy texture in 8x8 tile pattern
             if (_galaxyTexture != null)
             {
                 // Calculate scale for each tile to cover the map
                 const float mapSize = 8192f;
-                const int tilesX = 2;
-                const int tilesY = 2;
-                float tileSize = mapSize / tilesX; // Each tile is 4096x4096
+                const int tilesX = 8;
+                const int tilesY = 8;
+                float tileSize = mapSize / tilesX; // Each tile is 1024x1024
                 
                 float scaleX = tileSize / _tileSize.X;
                 float scaleY = tileSize / _tileSize.Y;
                 float scale = Math.Max(scaleX, scaleY);
                 
-                // Draw 2x2 grid of galaxy tiles
+                // Draw 8x8 grid of galaxy tiles
                 for (int y = 0; y < tilesY; y++)
                 {
                     for (int x = 0; x < tilesX; x++)

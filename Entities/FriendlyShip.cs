@@ -47,34 +47,6 @@ namespace Planet9.Entities
                 
                 if (distance > 1f) // Move if more than 1 pixel away
                 {
-                    // Calculate rotation to face movement direction
-                    float targetRotation = (float)System.Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
-                    
-                    // Update smooth rotation target
-                    _targetRotation = targetRotation;
-                    
-                    // Calculate shortest rotation path
-                    float angleDiff = _targetRotation - Rotation;
-                    
-                    // Normalize angle difference to [-Pi, Pi]
-                    while (angleDiff > MathHelper.Pi)
-                        angleDiff -= MathHelper.TwoPi;
-                    while (angleDiff < -MathHelper.Pi)
-                        angleDiff += MathHelper.TwoPi;
-                    
-                    // Only turn if the angle difference is significant
-                    const float minTurnAngle = 0.52f; // ~30 degrees
-                    
-                    if (System.Math.Abs(angleDiff) > minTurnAngle)
-                    {
-                        // Smoothly interpolate rotation towards target (much smoother than base class)
-                        float rotationDelta = RotationSpeed * deltaTime * 0.6f; // 40% reduction for very smooth turning
-                        
-                        // Use lerp for even smoother rotation
-                        float lerpAmount = System.Math.Min(rotationDelta / System.Math.Abs(angleDiff), 1f);
-                        Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpAmount);
-                    }
-                    
                     // Calculate desired velocity towards target
                     float desiredSpeed = MoveSpeed;
                     Vector2 desiredVelocity = direction;
@@ -86,6 +58,32 @@ namespace Planet9.Entities
                     
                     // Update position
                     Position += _velocity * deltaTime;
+                    
+                    // Always face the direction of actual movement (velocity direction)
+                    if (_velocity.LengthSquared() > 0.1f) // Only rotate if actually moving
+                    {
+                        // Calculate rotation to face velocity direction
+                        float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
+                        
+                        // Update smooth rotation target
+                        _targetRotation = targetRotation;
+                        
+                        // Calculate shortest rotation path
+                        float angleDiff = _targetRotation - Rotation;
+                        
+                        // Normalize angle difference to [-Pi, Pi]
+                        while (angleDiff > MathHelper.Pi)
+                            angleDiff -= MathHelper.TwoPi;
+                        while (angleDiff < -MathHelper.Pi)
+                            angleDiff += MathHelper.TwoPi;
+                        
+                        // Always rotate to face movement direction (no minimum angle threshold)
+                        float rotationDelta = RotationSpeed * deltaTime * 0.6f; // 40% reduction for very smooth turning
+                        
+                        // Use lerp for smooth rotation
+                        float lerpAmount = System.Math.Min(rotationDelta / System.Math.Max(System.Math.Abs(angleDiff), 0.01f), 1f);
+                        Rotation = MathHelper.Lerp(Rotation, _targetRotation, lerpAmount);
+                    }
                 }
                 else
                 {
@@ -116,46 +114,35 @@ namespace Planet9.Entities
                     ) * Drift * MoveSpeed * 0.3f; // 30% of move speed for drift
                     
                     Position += driftVelocity * deltaTime;
+                    
+                    // Face drift direction
+                    if (driftVelocity.LengthSquared() > 0.1f)
+                    {
+                        float targetRotation = (float)System.Math.Atan2(driftVelocity.Y, driftVelocity.X) + MathHelper.PiOver2;
+                        float angleDiff = targetRotation - Rotation;
+                        while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
+                        while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
+                        float rotationDelta = RotationSpeed * deltaTime * 0.6f;
+                        float lerpAmount = System.Math.Min(rotationDelta / System.Math.Max(System.Math.Abs(angleDiff), 0.01f), 1f);
+                        Rotation = MathHelper.Lerp(Rotation, targetRotation, lerpAmount);
+                    }
                 }
                 else
                 {
                     // Apply inertia to slow down
                     _velocity *= Inertia;
                     Position += _velocity * deltaTime;
-                }
-                
-                // Handle aiming at cursor when stationary
-                if (_aimTarget.HasValue)
-                {
-                    Vector2 aimDirection = _aimTarget.Value - Position;
-                    if (aimDirection.LengthSquared() > 0.1f) // Only rotate if target is not too close
+                    
+                    // Face velocity direction while coasting
+                    if (_velocity.LengthSquared() > 0.1f)
                     {
-                        // Calculate target rotation to face aim direction
-                        float targetRotation = (float)System.Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
-                        
-                        // Smoothly rotate towards target direction using aim rotation speed
-                        float rotationDelta = AimRotationSpeed * deltaTime * 0.6f; // 40% reduction for smoother turning
-                        
-                        // Calculate shortest rotation path
+                        float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
                         float angleDiff = targetRotation - Rotation;
-                        
-                        // Normalize angle difference to [-Pi, Pi]
-                        while (angleDiff > MathHelper.Pi)
-                            angleDiff -= MathHelper.TwoPi;
-                        while (angleDiff < -MathHelper.Pi)
-                            angleDiff += MathHelper.TwoPi;
-                        
-                        // Rotate towards target
-                        if (System.Math.Abs(angleDiff) < rotationDelta)
-                        {
-                            Rotation = targetRotation;
-                        }
-                        else
-                        {
-                            // Use lerp for smoother rotation
-                            float lerpAmount = System.Math.Min(rotationDelta / System.Math.Abs(angleDiff), 1f);
-                            Rotation = MathHelper.Lerp(Rotation, targetRotation, lerpAmount);
-                        }
+                        while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
+                        while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
+                        float rotationDelta = RotationSpeed * deltaTime * 0.6f;
+                        float lerpAmount = System.Math.Min(rotationDelta / System.Math.Max(System.Math.Abs(angleDiff), 0.01f), 1f);
+                        Rotation = MathHelper.Lerp(Rotation, targetRotation, lerpAmount);
                     }
                 }
             }

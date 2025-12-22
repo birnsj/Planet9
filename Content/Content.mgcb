@@ -1,3 +1,14 @@
+#-------------------------------- Reference --------------------------------#
+# This file references a list of libraries to load for content building.
+# They are listed at the top of the file in a /reference: tag
+# You can add either a file path or a directory.
+# If a directory is specified, all .dll files in the directory will be loaded.
+#/reference:../bin/DesktopGL
+#/reference:../bin/DesktopGL/Myra.dll
+#/reference:../bin/DesktopGL/MonoGame.Extended.dll
+
+#-------------------------------- Global --------------------------------#
+
 #begin spritefont/DefaultFont.spritefont
 /importer:FontDescriptionImporter
 /processor:FontDescriptionProcessor
@@ -7,6 +18,11 @@
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:galaxy.png
+
+#begin png/galaxytile.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:galaxytile.png
 
 #begin png/ship1.png
 /importer:TextureImporter
