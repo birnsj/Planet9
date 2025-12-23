@@ -303,8 +303,8 @@ namespace Planet9.Scenes
             
             // Create player ship at map center (will be switched based on saved class)
             _playerShip = new PlayerShip(GraphicsDevice, Content);
-            _playerShip.Health = 100f; // Player has 100 health
-            _playerShip.MaxHealth = 100f;
+            _playerShip.Health = 50f; // Player has 50 health
+            _playerShip.MaxHealth = 50f;
             _playerShip.Damage = 10f; // Player does 10 damage
             _playerShip.Position = mapCenter;
             _currentShipClassIndex = 0; // Default to PlayerShip
@@ -5502,8 +5502,8 @@ namespace Planet9.Scenes
             if (classIndex == 0)
             {
                 _playerShip = new PlayerShip(GraphicsDevice, Content);
-            _playerShip.Health = 100f; // Player has 100 health
-            _playerShip.MaxHealth = 100f;
+            _playerShip.Health = 50f; // Player has 50 health
+            _playerShip.MaxHealth = 50f;
             _playerShip.Damage = 10f; // Player does 10 damage
             }
             else if (classIndex == 1)

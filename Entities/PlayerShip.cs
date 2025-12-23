@@ -20,8 +20,8 @@ namespace Planet9.Entities
         public float AvoidanceDetectionRange { get; set; } = 300f; // Avoidance detection range for this ship
         public float LookAheadDistance { get; set; } = 1.5f; // Look-ahead distance multiplier (multiplied by MoveSpeed for actual distance)
         public bool LookAheadVisible { get; set; } = false; // Whether to show debug line for look-ahead target
-        public float Health { get; set; } = 100f; // Ship health
-        public float MaxHealth { get; set; } = 100f; // Maximum health
+        public float Health { get; set; } = 50f; // Ship health
+        public float MaxHealth { get; set; } = 50f; // Maximum health
         public float HealthRegenRate { get; set; } = 20f; // Health per second
         public float Damage { get; set; } = 10f; // Damage dealt by this ship's lasers
         public bool IsFleeing { get; set; } = false; // Track if ship is currently fleeing
@@ -162,15 +162,24 @@ namespace Planet9.Entities
             // Update damage effect (activate when ship is damaged and remain active while damaged)
             if (_damageEffect != null)
             {
-                // Activate damage effect when ship has taken damage (Health < MaxHealth)
-                // This will show particles when fleeing starts and keep them active while the ship is damaged
-                // When health regenerates to full, the damage effect will automatically stop
+                // Activate damage effect only when ship has taken damage (Health < MaxHealth)
+                // Stop the effect when health is at full (Health >= MaxHealth)
                 bool shouldShowDamage = Health < MaxHealth && Health > 0f;
-                _damageEffect.SetActive(shouldShowDamage);
                 
-                if (shouldShowDamage)
+                if (Health >= MaxHealth)
                 {
-                    _damageEffect.Update(deltaTime, Position, Rotation);
+                    // At full health, stop the damage effect and clear existing particles
+                    _damageEffect.SetActive(false);
+                    _damageEffect.Clear();
+                }
+                else
+                {
+                    _damageEffect.SetActive(shouldShowDamage);
+                    
+                    if (shouldShowDamage)
+                    {
+                        _damageEffect.Update(deltaTime, Position, Rotation);
+                    }
                 }
             }
             
