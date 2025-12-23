@@ -25,6 +25,7 @@ namespace Planet9.Scenes
     public class GameScene : Scene
     {
         private Texture2D? _galaxyTexture;
+        private Texture2D? _galaxyOverlayTexture;
         private Vector2 _tileSize;
         private const int TilesX = 4;
         private const int TilesY = 4;
@@ -211,6 +212,16 @@ namespace Planet9.Scenes
             catch (System.Exception ex)
             {
                 System.Console.WriteLine($"Failed to load galaxy tile texture: {ex.Message}");
+            }
+            
+            // Load galaxy overlay texture
+            try
+            {
+                _galaxyOverlayTexture = Content.Load<Texture2D>("galaxy");
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"Failed to load galaxy overlay texture: {ex.Message}");
             }
             
             // Load and play background music
@@ -1423,8 +1434,8 @@ namespace Planet9.Scenes
                 Background = new Myra.Graphics2D.Brushes.SolidBrush(new Microsoft.Xna.Framework.Color(20, 20, 20, 220)), // Semi-transparent dark background
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0),
-                Margin = new Myra.Graphics2D.Thickness(0, 0, 0, 0) // No margin needed, VerticalStackPanel handles spacing
+                Padding = new Myra.Graphics2D.Thickness(15, 15, 15, 15), // Add padding around the panel content
+                Margin = new Myra.Graphics2D.Thickness(20, 0, 0, 0) // Padding to the right of main panel
             };
             _cameraSettingsPanel.Widgets.Add(cameraSettingsGrid);
             
@@ -1438,12 +1449,12 @@ namespace Planet9.Scenes
             };
             uiPanel.Widgets.Add(grid);
             
-            // Create a container panel to hold both UI panel and camera settings panel (vertical layout)
-            var containerPanel = new VerticalStackPanel
+            // Create a container panel to hold both UI panel and camera settings panel (horizontal layout, top-aligned)
+            var containerPanel = new HorizontalStackPanel
             {
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Spacing = 10, // Padding between panels
+                Spacing = 0, // No spacing, using margin for padding instead
                 Padding = new Myra.Graphics2D.Thickness(0, 0, 0, 0)
             };
             containerPanel.Widgets.Add(uiPanel);
@@ -5145,6 +5156,28 @@ namespace Planet9.Scenes
                 }
             }
             
+            // Draw galaxy overlay over the whole map at 30% opacity
+            if (_galaxyOverlayTexture != null)
+            {
+                const float mapSize = 8192f;
+                // Scale the overlay to cover the entire map
+                float scaleX = mapSize / _galaxyOverlayTexture.Width;
+                float scaleY = mapSize / _galaxyOverlayTexture.Height;
+                float scale = Math.Max(scaleX, scaleY);
+                
+                spriteBatch.Draw(
+                    _galaxyOverlayTexture,
+                    Vector2.Zero,
+                    null,
+                    Color.White * 0.3f, // 30% opacity
+                    0f,
+                    Vector2.Zero,
+                    scale,
+                    SpriteEffects.None,
+                    0f
+                );
+            }
+            
             // Draw A* pathfinding grid (in world space, before ships)
             if (_pathfindingGridVisible && _pathfindingGrid != null && _gridPixelTexture != null)
             {
@@ -5960,6 +5993,22 @@ namespace Planet9.Scenes
                 );
             }
             
+            // Draw galaxy overlay on minimap at 30% opacity
+            if (_galaxyOverlayTexture != null)
+            {
+                var minimapRect = new Rectangle(minimapX, minimapY, MinimapSize, MinimapSize);
+                spriteBatch.Draw(
+                    _galaxyOverlayTexture,
+                    minimapRect,
+                    null,
+                    Color.White * 0.3f, // 30% opacity
+                    0f,
+                    Vector2.Zero,
+                    SpriteEffects.None,
+                    0f
+                );
+            }
+            
             // Convert world positions to minimap screen positions
             Vector2 WorldToMinimap(Vector2 worldPos)
             {
@@ -6140,6 +6189,38 @@ namespace Planet9.Scenes
                     cameraColor
                 );
             }
+            
+            // Draw minimap border
+            const int borderWidth = 2;
+            Color borderColor = Color.White; // White border for visibility
+            
+            // Top border
+            spriteBatch.Draw(
+                _minimapViewportOutlineTexture,
+                new Rectangle(minimapX, minimapY, MinimapSize, borderWidth),
+                borderColor
+            );
+            
+            // Bottom border
+            spriteBatch.Draw(
+                _minimapViewportOutlineTexture,
+                new Rectangle(minimapX, minimapY + MinimapSize - borderWidth, MinimapSize, borderWidth),
+                borderColor
+            );
+            
+            // Left border
+            spriteBatch.Draw(
+                _minimapViewportOutlineTexture,
+                new Rectangle(minimapX, minimapY, borderWidth, MinimapSize),
+                borderColor
+            );
+            
+            // Right border
+            spriteBatch.Draw(
+                _minimapViewportOutlineTexture,
+                new Rectangle(minimapX + MinimapSize - borderWidth, minimapY, borderWidth, MinimapSize),
+                borderColor
+            );
             
             spriteBatch.End();
         }
