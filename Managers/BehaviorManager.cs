@@ -134,39 +134,43 @@ namespace Planet9.Managers
                 state.BehaviorTimer = GetBehaviorDuration(state.Behavior);
             }
             
-            // Check if currently fleeing - if fully healed, resume normal behavior immediately
+            // Check if currently fleeing - if health has regenerated, resume normal behavior immediately
             FriendlyShipBehavior friendlyCurrentBehavior = state.Behavior;
-            if (friendlyCurrentBehavior == FriendlyShipBehavior.Flee && friendlyShip.Health >= friendlyShip.MaxHealth)
+            if (friendlyCurrentBehavior == FriendlyShipBehavior.Flee)
             {
-                // Fully healed, switch back to random behavior immediately
-                FriendlyShipBehavior newBehavior = GetRandomBehavior();
-                // Don't randomly select Flee
-                while (newBehavior == FriendlyShipBehavior.Flee)
+                // Exit if fully healed (health has regenerated)
+                if (friendlyShip.Health >= friendlyShip.MaxHealth)
                 {
-                    newBehavior = GetRandomBehavior();
+                    // Health has regenerated - exit flee, switch back to random behavior
+                    FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                    // Don't randomly select Flee
+                    while (newBehavior == FriendlyShipBehavior.Flee)
+                    {
+                        newBehavior = GetRandomBehavior();
+                    }
+                    state.Behavior = newBehavior;
+                    state.BehaviorTimer = GetBehaviorDuration(newBehavior);
+                    friendlyShip.IsFleeing = false; // No longer fleeing, stop damage effect
+                    
+                    // Face the direction the ship is moving when resuming behavior
+                    if (friendlyShip.Velocity.LengthSquared() > 1f)
+                    {
+                        float targetRotation = (float)Math.Atan2(friendlyShip.Velocity.Y, friendlyShip.Velocity.X) + MathHelper.PiOver2;
+                        friendlyShip.Rotation = targetRotation;
+                    }
+                    
+                    if (newBehavior == FriendlyShipBehavior.Idle)
+                    {
+                        friendlyShip.StopMoving();
+                        friendlyShip.IsIdle = true;
+                    }
+                    else
+                    {
+                        friendlyShip.IsIdle = false;
+                    }
+                    
+                    System.Console.WriteLine($"[FRIENDLY] Health regenerated! Exiting flee. Health: {friendlyShip.Health:F1}/{friendlyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
                 }
-                state.Behavior = newBehavior;
-                state.BehaviorTimer = GetBehaviorDuration(newBehavior);
-                friendlyShip.IsFleeing = false; // No longer fleeing, stop damage effect
-                
-                // Face the direction the ship is moving when resuming behavior
-                if (friendlyShip.Velocity.LengthSquared() > 1f)
-                {
-                    float targetRotation = (float)Math.Atan2(friendlyShip.Velocity.Y, friendlyShip.Velocity.X) + MathHelper.PiOver2;
-                    friendlyShip.Rotation = targetRotation;
-                }
-                
-                if (newBehavior == FriendlyShipBehavior.Idle)
-                {
-                    friendlyShip.StopMoving();
-                    friendlyShip.IsIdle = true;
-                }
-                else
-                {
-                    friendlyShip.IsIdle = false;
-                }
-                
-                System.Console.WriteLine($"[FRIENDLY] Fully healed! Health: {friendlyShip.Health:F1}/{friendlyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
             }
             // Decrement behavior timer (only if not fleeing or not fully healed)
             else
@@ -192,10 +196,10 @@ namespace Planet9.Managers
                 // Check if behavior should transition (timer-based transitions)
                 if (state.BehaviorTimer <= 0f)
                 {
-                    // If currently fleeing (but not fully healed yet), continue fleeing
+                    // If currently fleeing (but not ready to exit yet), continue fleeing
                     if (friendlyCurrentBehavior == FriendlyShipBehavior.Flee)
                     {
-                        // Still damaged, continue fleeing - reset timer
+                        // Still damaged or threat nearby, continue fleeing - reset timer
                         state.BehaviorTimer = 10.0f; // Continue fleeing
                     }
                     else
@@ -318,10 +322,10 @@ namespace Planet9.Managers
                     }
                     else
                     {
-                        // For flee behavior, check if fully healed - if so, resume normal behavior immediately
+                        // For flee behavior, check if health has regenerated - exit immediately when fully healed
                         if (enemyShip.Health >= enemyShip.MaxHealth)
                         {
-                            // Fully healed, switch back to random behavior immediately
+                            // Health has regenerated - exit flee immediately
                             FriendlyShipBehavior newBehavior = GetRandomBehavior();
                             while (newBehavior == FriendlyShipBehavior.Flee)
                             {
@@ -348,7 +352,7 @@ namespace Planet9.Managers
                                 enemyShip.IsIdle = false;
                             }
                             
-                            System.Console.WriteLine($"[ENEMY] Fully healed! Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
+                            System.Console.WriteLine($"[ENEMY] Health regenerated! Exiting flee. Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
                         }
                         else
                         {
@@ -360,12 +364,13 @@ namespace Planet9.Managers
                     // Check if behavior should transition
                     if (enemyState.BehaviorTimer <= 0f)
                     {
-                        // If currently fleeing, check if fully healed - if so, resume normal behavior immediately
+                        // If currently fleeing, check if health has regenerated
                         if (enemyCurrentBehavior == FriendlyShipBehavior.Flee)
                         {
-                            // If fully healed, switch back to random behavior immediately
+                            // Exit if fully healed (health has regenerated)
                             if (enemyShip.Health >= enemyShip.MaxHealth)
                             {
+                                // Health has regenerated - exit flee
                                 FriendlyShipBehavior newBehavior = GetRandomBehavior();
                                 while (newBehavior == FriendlyShipBehavior.Flee)
                                 {
@@ -392,7 +397,7 @@ namespace Planet9.Managers
                                     enemyShip.IsIdle = false;
                                 }
                                 
-                                System.Console.WriteLine($"[ENEMY] Fully healed! Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
+                                System.Console.WriteLine($"[ENEMY] Health regenerated! Exiting flee. Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
                             }
                             else
                             {
@@ -878,6 +883,14 @@ namespace Planet9.Managers
         private void ExecuteFleeBehavior(FriendlyShip friendlyShip)
         {
             if (_getOrCreateShipState == null || _enemyShips == null) return;
+            
+            // Check if should exit flee BEFORE executing flee behavior
+            // Exit if fully healed (100% health) - health has regenerated
+            if (friendlyShip.Health >= friendlyShip.MaxHealth)
+            {
+                // Don't execute flee - let the timer update handle the exit
+                return;
+            }
             
             // Flee: Ship continuously tries to escape from nearest threat (player or enemy)
             Vector2? nearestThreatPos = null;

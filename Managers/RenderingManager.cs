@@ -805,7 +805,7 @@ namespace Planet9.Managers
         public void DrawPathfindingGrid(
             SpriteBatch spriteBatch,
             Viewport viewport,
-            Scenes.PathfindingGrid? pathfindingGrid,
+            PathfindingGrid? pathfindingGrid,
             Vector2 cameraPosition,
             float cameraZoom)
         {

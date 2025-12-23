@@ -19,7 +19,7 @@ namespace Planet9.Managers
         private readonly Random _random;
         
         // Player ship
-        public PlayerShip? PlayerShip { get; private set; }
+        public PlayerShip? PlayerShip { get; set; }
         
         // Friendly ships
         public List<FriendlyShip> FriendlyShips { get; private set; } = new List<FriendlyShip>();
@@ -182,6 +182,70 @@ namespace Planet9.Managers
             foreach (var enemyShip in EnemyShips)
             {
                 enemyShip.Draw(spriteBatch);
+            }
+        }
+        
+        // Callbacks for SwitchShipClass
+        public Func<int>? GetCurrentShipClassIndex { get; set; }
+        public Action<int>? SetCurrentShipClassIndex { get; set; }
+        public Action? SaveCurrentShipSettings { get; set; }
+        public Func<float, float, (float, float)>? LoadCurrentShipSettings { get; set; }
+        public Func<float>? GetAvoidanceDetectionRange { get; set; }
+        public Action<float>? SetAvoidanceDetectionRange { get; set; }
+        public Func<float>? GetShipIdleRate { get; set; }
+        public Action<float>? SetShipIdleRate { get; set; }
+        public Action<int>? UpdatePreviewShipIndex { get; set; }
+        public Action? UpdatePreviewShipLabel { get; set; }
+        public Func<bool>? IsPreviewActive { get; set; }
+        
+        /// <summary>
+        /// Switch the player ship class (PlayerShip, FriendlyShip, or EnemyShip)
+        /// </summary>
+        public void SwitchShipClass(int classIndex)
+        {
+            var currentIndex = GetCurrentShipClassIndex?.Invoke() ?? 0;
+            if (classIndex == currentIndex) return;
+            
+            // Save current ship settings before switching
+            SaveCurrentShipSettings?.Invoke();
+            
+            // Switch ship class
+            SetCurrentShipClassIndex?.Invoke(classIndex);
+            var mapCenter = PlayerShip?.Position ?? new Vector2(4096f, 4096f);
+            
+            // Create new ship instance
+            if (classIndex == 0)
+            {
+                PlayerShip = new PlayerShip(_graphicsDevice, _content, _random);
+                PlayerShip.Health = 50f; // Player has 50 health
+                PlayerShip.MaxHealth = 50f;
+                PlayerShip.Damage = 10f; // Player does 10 damage
+            }
+            else if (classIndex == 1)
+            {
+                PlayerShip = new FriendlyShip(_graphicsDevice, _content, _random);
+            }
+            else // classIndex == 2
+            {
+                PlayerShip = new EnemyShip(_graphicsDevice, _content, _random);
+            }
+            PlayerShip.Position = mapCenter;
+            
+            // Sync preview index if preview is active
+            if (IsPreviewActive?.Invoke() == true)
+            {
+                UpdatePreviewShipIndex?.Invoke(classIndex);
+                UpdatePreviewShipLabel?.Invoke();
+            }
+            
+            // Load settings for the new class
+            var avoidanceDetectionRange = GetAvoidanceDetectionRange?.Invoke() ?? 300f;
+            var shipIdleRate = GetShipIdleRate?.Invoke() ?? 0.3f;
+            if (LoadCurrentShipSettings != null)
+            {
+                var result = LoadCurrentShipSettings(avoidanceDetectionRange, shipIdleRate);
+                SetAvoidanceDetectionRange?.Invoke(result.Item1);
+                SetShipIdleRate?.Invoke(result.Item2);
             }
         }
     }

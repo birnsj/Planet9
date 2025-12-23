@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -23,6 +24,13 @@ namespace Planet9.Managers
         private bool _followingPlayer = true;
         private bool _isPanningToPlayer = false;
         
+        // Callbacks for camera update
+        public Func<Vector2?>? GetPlayerPosition { get; set; }
+        public Func<bool>? IsWASDPressed { get; set; }
+        public Func<bool>? IsKeyJustPressed { get; set; }
+        public Func<Keys, bool>? IsKeyDown { get; set; }
+        public Func<int>? GetScrollDelta { get; set; }
+        
         public Vector2 Position
         {
             get => _position;
@@ -40,6 +48,14 @@ namespace Planet9.Managers
             get => _followingPlayer;
             set => _followingPlayer = value;
         }
+        
+        public bool IsPanningToPlayer
+        {
+            get => _isPanningToPlayer;
+            set => _isPanningToPlayer = value;
+        }
+        
+        public Vector2 Velocity => _velocity;
         
         /// <summary>
         /// Get the camera transform matrix for the given viewport
@@ -72,95 +88,187 @@ namespace Planet9.Managers
         }
         
         /// <summary>
-        /// Update camera position and zoom
+        /// Update camera position, zoom, and movement
         /// </summary>
-        public void Update(GameTime gameTime, Vector2? playerPosition, Viewport viewport)
+        public void Update(GameTime gameTime, Viewport viewport, float mapSize)
         {
             var deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
-            var keyboardState = Keyboard.GetState();
-            var mouseState = Mouse.GetState();
+            var playerPosition = GetPlayerPosition?.Invoke();
             
             // Handle zoom with mouse wheel
-            int scrollDelta = mouseState.ScrollWheelValue - (Mouse.GetState().ScrollWheelValue - mouseState.ScrollWheelValue);
+            int scrollDelta = GetScrollDelta?.Invoke() ?? 0;
             if (scrollDelta != 0)
             {
-                float zoomDelta = scrollDelta > 0 ? ZoomSpeed : -ZoomSpeed;
-                _zoom = MathHelper.Clamp(_zoom + zoomDelta, MinZoom, MaxZoom);
+                float zoomChange = scrollDelta > 0 ? ZoomSpeed : -ZoomSpeed;
+                _zoom = MathHelper.Clamp(_zoom + zoomChange, MinZoom, MaxZoom);
             }
             
-            // Handle keyboard zoom
-            if (keyboardState.IsKeyDown(Keys.PageUp))
+            // Check for spacebar to smoothly pan camera back to player
+            if (IsKeyJustPressed?.Invoke() == true && playerPosition.HasValue)
             {
-                _zoom = MathHelper.Clamp(_zoom + ZoomSpeed * deltaTime * 2f, MinZoom, MaxZoom);
-            }
-            if (keyboardState.IsKeyDown(Keys.PageDown))
-            {
-                _zoom = MathHelper.Clamp(_zoom - ZoomSpeed * deltaTime * 2f, MinZoom, MaxZoom);
+                _isPanningToPlayer = true;
+                _followingPlayer = true;
             }
             
-            // Handle camera movement
-            Vector2 desiredVelocity = Vector2.Zero;
+            // Check if WASD is pressed
+            bool isWASDPressed = IsWASDPressed?.Invoke() ?? false;
             
-            // Follow player if enabled
-            if (_followingPlayer && playerPosition.HasValue && !_isPanningToPlayer)
+            if (isWASDPressed)
             {
-                Vector2 toPlayer = playerPosition.Value - _position;
-                float distance = toPlayer.Length();
+                // Cancel panning and following when WASD is pressed
+                _isPanningToPlayer = false;
+                _followingPlayer = false;
                 
-                if (distance > 10f)
+                // Manual camera control with WASD
+                var movement = Vector2.Zero;
+                if (IsKeyDown?.Invoke(Keys.A) == true)
+                    movement.X -= 1f; // Move left
+                if (IsKeyDown?.Invoke(Keys.D) == true)
+                    movement.X += 1f; // Move right
+                if (IsKeyDown?.Invoke(Keys.W) == true)
+                    movement.Y -= 1f; // Move up
+                if (IsKeyDown?.Invoke(Keys.S) == true)
+                    movement.Y += 1f; // Move down
+                
+                // Normalize diagonal movement
+                if (movement.Length() > 0)
                 {
-                    desiredVelocity = toPlayer;
-                    desiredVelocity.Normalize();
-                    desiredVelocity *= PanSpeed;
+                    movement.Normalize();
+                    var targetVelocity = movement * CameraSpeed;
+                    // Apply inertia to velocity
+                    _velocity = Vector2.Lerp(_velocity, targetVelocity, (1f - Inertia));
+                }
+                else
+                {
+                    // Apply deceleration when no input
+                    _velocity *= Inertia;
                 }
             }
             else
             {
-                // Manual camera movement with arrow keys
-                if (keyboardState.IsKeyDown(Keys.Left) || keyboardState.IsKeyDown(Keys.A))
+                // Apply deceleration when not using WASD
+                if (_velocity.Length() > 1f)
                 {
-                    desiredVelocity.X -= CameraSpeed;
+                    _velocity *= Inertia;
                 }
-                if (keyboardState.IsKeyDown(Keys.Right) || keyboardState.IsKeyDown(Keys.D))
+                else
                 {
-                    desiredVelocity.X += CameraSpeed;
-                }
-                if (keyboardState.IsKeyDown(Keys.Up) || keyboardState.IsKeyDown(Keys.W))
-                {
-                    desiredVelocity.Y -= CameraSpeed;
-                }
-                if (keyboardState.IsKeyDown(Keys.Down) || keyboardState.IsKeyDown(Keys.S))
-                {
-                    desiredVelocity.Y += CameraSpeed;
+                    _velocity = Vector2.Zero;
                 }
             }
             
-            // Apply inertia to camera movement
-            _velocity = Vector2.Lerp(_velocity, desiredVelocity, 1f - Inertia);
+            // Apply velocity to camera position, then clamp to map bounds
             _position += _velocity * deltaTime;
             
-            // Apply damping to velocity
-            _velocity *= 0.9f;
-            if (_velocity.LengthSquared() < 1f)
+            // Clamp camera position to map bounds (accounting for viewport size and zoom)
+            var viewWidth = viewport.Width / _zoom;
+            var viewHeight = viewport.Height / _zoom;
+            var minX = viewWidth / 2f;
+            var maxX = mapSize - viewWidth / 2f;
+            var minY = viewHeight / 2f;
+            var maxY = mapSize - viewHeight / 2f;
+            
+            _position.X = MathHelper.Clamp(_position.X, minX, maxX);
+            _position.Y = MathHelper.Clamp(_position.Y, minY, maxY);
+            
+            // Stop velocity if we hit a boundary
+            if ((_position.X <= minX && _velocity.X < 0) || 
+                (_position.X >= maxX && _velocity.X > 0))
             {
-                _velocity = Vector2.Zero;
+                _velocity.X = 0;
+            }
+            if ((_position.Y <= minY && _velocity.Y < 0) || 
+                (_position.Y >= maxY && _velocity.Y > 0))
+            {
+                _velocity.Y = 0;
+            }
+            
+            if (_isPanningToPlayer && playerPosition.HasValue)
+            {
+                // Smoothly pan camera back to player position
+                var targetPosition = playerPosition.Value;
+                var direction = targetPosition - _position;
+                var distance = direction.Length();
+                
+                if (distance > 1f)
+                {
+                    // Move camera towards player
+                    direction.Normalize();
+                    var moveDistance = PanSpeed * deltaTime;
+                    
+                    // Don't overshoot
+                    if (moveDistance > distance)
+                    {
+                        _position = targetPosition;
+                        _isPanningToPlayer = false;
+                    }
+                    else
+                    {
+                        _position += direction * moveDistance;
+                    }
+                    
+                    // Clamp to map bounds during panning
+                    var panViewWidth = viewport.Width / _zoom;
+                    var panViewHeight = viewport.Height / _zoom;
+                    var panMinX = panViewWidth / 2f;
+                    var panMaxX = mapSize - panViewWidth / 2f;
+                    var panMinY = panViewHeight / 2f;
+                    var panMaxY = mapSize - panViewHeight / 2f;
+                    
+                    _position.X = MathHelper.Clamp(_position.X, panMinX, panMaxX);
+                    _position.Y = MathHelper.Clamp(_position.Y, panMinY, panMaxY);
+                    
+                    // If we hit a boundary, stop panning but keep following
+                    if ((_position.X <= panMinX || _position.X >= panMaxX || 
+                         _position.Y <= panMinY || _position.Y >= panMaxY) && 
+                        _position != targetPosition)
+                    {
+                        _isPanningToPlayer = false;
+                    }
+                }
+                else
+                {
+                    // Reached player position - panning complete
+                    _position = targetPosition;
+                    _isPanningToPlayer = false;
+                    
+                    // Clamp final position to map bounds
+                    var finalViewWidth = viewport.Width / _zoom;
+                    var finalViewHeight = viewport.Height / _zoom;
+                    var finalMinX = finalViewWidth / 2f;
+                    var finalMaxX = mapSize - finalViewWidth / 2f;
+                    var finalMinY = finalViewHeight / 2f;
+                    var finalMaxY = mapSize - finalViewHeight / 2f;
+                    
+                    _position.X = MathHelper.Clamp(_position.X, finalMinX, finalMaxX);
+                    _position.Y = MathHelper.Clamp(_position.Y, finalMinY, finalMaxY);
+                }
+            }
+            else if (_followingPlayer && playerPosition.HasValue && !_isPanningToPlayer)
+            {
+                // Keep camera locked on player after panning completes
+                _position = playerPosition.Value;
+                
+                // Clamp to map bounds
+                var followViewWidth = viewport.Width / _zoom;
+                var followViewHeight = viewport.Height / _zoom;
+                var followMinX = followViewWidth / 2f;
+                var followMaxX = mapSize - followViewWidth / 2f;
+                var followMinY = followViewHeight / 2f;
+                var followMaxY = mapSize - followViewHeight / 2f;
+                
+                _position.X = MathHelper.Clamp(_position.X, followMinX, followMaxX);
+                _position.Y = MathHelper.Clamp(_position.Y, followMinY, followMaxY);
             }
         }
         
         /// <summary>
-        /// Pan camera to player position
+        /// Pan camera to player position (legacy method for compatibility)
         /// </summary>
         public void PanToPlayer(Vector2 playerPosition, float panSpeed)
         {
             _isPanningToPlayer = true;
-            Vector2 toPlayer = playerPosition - _position;
-            float distance = toPlayer.Length();
-            
-            if (distance < 10f)
-            {
-                _isPanningToPlayer = false;
-                _followingPlayer = true;
-            }
+            _followingPlayer = true;
         }
         
         /// <summary>

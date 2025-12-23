@@ -22,7 +22,7 @@ namespace Planet9.Entities
         public bool LookAheadVisible { get; set; } = false; // Whether to show debug line for look-ahead target
         public float Health { get; set; } = 50f; // Ship health
         public float MaxHealth { get; set; } = 50f; // Maximum health
-        public float HealthRegenRate { get; set; } = 20f; // Health per second
+        public float HealthRegenRate { get; set; } = 5f; // Health per second (reduced from 20f for slower regen)
         public float Damage { get; set; } = 10f; // Damage dealt by this ship's lasers
         public bool IsFleeing { get; set; } = false; // Track if ship is currently fleeing
         protected bool _isMoving = false;
