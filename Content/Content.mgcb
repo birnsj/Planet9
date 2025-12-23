@@ -89,3 +89,8 @@
 /processor:SoundEffectProcessor
 /build:shipfly1.ogg
 
+#begin ../../raw/audio/sfx/explosion1.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/build:explosion1.ogg
+

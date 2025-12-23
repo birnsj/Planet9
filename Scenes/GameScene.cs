@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Audio;
@@ -16,7 +17,9 @@ namespace Planet9.Scenes
         Idle,           // Ship stays in place, may drift slightly
         Patrol,         // Ship moves in a small area, patrolling
         LongDistance,    // Ship flies long distance across the map
-        Wander          // Ship moves randomly within map bounds
+        Wander,         // Ship moves randomly within map bounds
+        Aggressive,     // Ship targets and attacks the player (enemy ships only)
+        Flee            // Ship flees from player/enemy when being shot at
     }
     
     public class GameScene : Scene
@@ -38,6 +41,8 @@ namespace Planet9.Scenes
         private Texture2D? _minimapBackgroundTexture;
         private Texture2D? _minimapPlayerDotTexture;
         private Texture2D? _minimapFriendlyDotTexture;
+        private Texture2D? _minimapEnemyDotTexture;
+        private Texture2D? _pixelTexture; // 1x1 pixel texture for drawing health bars
         private Texture2D? _minimapViewportOutlineTexture;
         
         // Camera position and zoom
@@ -50,18 +55,31 @@ namespace Planet9.Scenes
         
         // Player ship
         private PlayerShip? _playerShip;
-        private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = FriendlyShip
+        private int _currentShipClassIndex = 0; // 0 = PlayerShip, 1 = FriendlyShip, 2 = EnemyShip
         
         // Friendly ships
         private System.Collections.Generic.List<FriendlyShip> _friendlyShips = new System.Collections.Generic.List<FriendlyShip>();
         private System.Collections.Generic.Dictionary<FriendlyShip, FriendlyShipBehavior> _friendlyShipBehaviors = new System.Collections.Generic.Dictionary<FriendlyShip, FriendlyShipBehavior>();
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipBehaviorTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>(); // Timer for current behavior
+        
+        // Enemy ships
+        private System.Collections.Generic.List<EnemyShip> _enemyShips = new System.Collections.Generic.List<EnemyShip>();
+        
+        // Active explosions (explosions that continue after ships are destroyed)
+        private System.Collections.Generic.List<ExplosionEffect> _activeExplosions = new System.Collections.Generic.List<ExplosionEffect>();
+        private System.Collections.Generic.Dictionary<EnemyShip, FriendlyShipBehavior> _enemyShipBehaviors = new System.Collections.Generic.Dictionary<EnemyShip, FriendlyShipBehavior>();
+        private System.Collections.Generic.Dictionary<EnemyShip, float> _enemyShipBehaviorTimer = new System.Collections.Generic.Dictionary<EnemyShip, float>(); // Timer for current behavior
+        private System.Collections.Generic.Dictionary<EnemyShip, float> _enemyShipAttackCooldown = new System.Collections.Generic.Dictionary<EnemyShip, float>(); // Cooldown between attacks
+        private const float EnemyPlayerDetectionRange = 1500f; // Range at which enemy detects and switches to aggressive behavior
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastAvoidanceTarget = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipOriginalDestination = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>(); // Store original destination before avoidance
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastPosition = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>();
         private System.Collections.Generic.Dictionary<FriendlyShip, float> _friendlyShipStuckTimer = new System.Collections.Generic.Dictionary<FriendlyShip, float>();
         private System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>> _friendlyShipPaths = new System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>>();
         private System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>> _friendlyShipPatrolPoints = new System.Collections.Generic.Dictionary<FriendlyShip, System.Collections.Generic.List<Vector2>>(); // Patrol waypoints
+        
+        // Enemy ship behavior tracking (shared with friendly ship dictionaries where applicable)
+        private System.Collections.Generic.Dictionary<EnemyShip, System.Collections.Generic.List<Vector2>> _enemyShipPatrolPoints = new System.Collections.Generic.Dictionary<EnemyShip, System.Collections.Generic.List<Vector2>>(); // Patrol waypoints for enemy ships
         private System.Collections.Generic.Dictionary<FriendlyShip, Vector2> _friendlyShipLastDirection = new System.Collections.Generic.Dictionary<FriendlyShip, Vector2>(); // Track last movement direction for smooth pathing
         private const int MaxPathPoints = 100; // Maximum number of path points to store per ship
         private System.Random _random = new System.Random();
@@ -147,6 +165,7 @@ namespace Planet9.Scenes
         private Label? _aimRotationSpeedLabel;
         private SoundEffectInstance? _backgroundMusicInstance;
         private SoundEffect? _laserFireSound;
+        private SoundEffect? _explosionSound;
         private SoundEffectInstance? _shipFlySound;
         private SoundEffectInstance? _shipIdleSound;
         private SpriteFont? _font; // Font for drawing behavior labels
@@ -222,6 +241,18 @@ namespace Planet9.Scenes
                 System.Console.WriteLine($"Failed to load laser fire sound: {ex.Message}");
             }
             
+            // Load explosion sound effect
+            try
+            {
+                _explosionSound = Content.Load<SoundEffect>("explosion1");
+                System.Console.WriteLine($"[EXPLOSION SOUND] Loaded successfully: {_explosionSound != null}");
+            }
+            catch (System.Exception ex)
+            {
+                System.Console.WriteLine($"[EXPLOSION SOUND ERROR] Failed to load explosion sound: {ex.Message}");
+                System.Console.WriteLine($"[EXPLOSION SOUND ERROR] Stack trace: {ex.StackTrace}");
+            }
+            
             // Load ship idle and fly sound effects
             try
             {
@@ -272,6 +303,9 @@ namespace Planet9.Scenes
             
             // Create player ship at map center (will be switched based on saved class)
             _playerShip = new PlayerShip(GraphicsDevice, Content);
+            _playerShip.Health = 100f; // Player has 100 health
+            _playerShip.MaxHealth = 100f;
+            _playerShip.Damage = 10f; // Player does 10 damage
             _playerShip.Position = mapCenter;
             _currentShipClassIndex = 0; // Default to PlayerShip
             
@@ -361,6 +395,52 @@ namespace Planet9.Scenes
                 _friendlyShips.Add(friendlyShip);
             }
             
+            // Create 3 enemy ships at random positions
+            for (int i = 0; i < 3; i++)
+            {
+                var enemyShip = new EnemyShip(GraphicsDevice, Content);
+                // Initialize behavior system - start with random behavior like friendly ships
+                _enemyShipBehaviors[enemyShip] = GetRandomBehavior();
+                _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(_enemyShipBehaviors[enemyShip]);
+                _enemyShipAttackCooldown[enemyShip] = 0f;
+                
+                // Random position within map bounds (with some margin from edges)
+                float margin = 500f;
+                float x = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
+                float y = (float)(_random.NextDouble() * (mapSize - margin * 2) + margin);
+                enemyShip.Position = new Vector2(x, y);
+                
+                // Use default settings for enemy ships (can be customized later)
+                enemyShip.MoveSpeed = 250f;
+                enemyShip.RotationSpeed = 3f;
+                enemyShip.Inertia = 0.9f;
+                enemyShip.AimRotationSpeed = 3f;
+                enemyShip.Drift = 0f;
+                enemyShip.AvoidanceDetectionRange = 300f;
+                enemyShip.LookAheadDistance = 1.5f;
+                enemyShip.LookAheadVisible = false; // Enemies don't show look-ahead by default
+                enemyShip.Health = 100f; // Enemy ships have 100 health
+                enemyShip.MaxHealth = 100f;
+                enemyShip.Damage = 5f; // Enemy ships do 5 damage
+                
+                // Initialize direction tracking with random direction (for behaviors)
+                float initialAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
+                // Cast to FriendlyShip to use shared dictionaries
+                FriendlyShip enemyAsFriendly = (FriendlyShip)enemyShip;
+                if (!_friendlyShipLastDirection.ContainsKey(enemyAsFriendly))
+                {
+                    _friendlyShipLastDirection[enemyAsFriendly] = new Vector2((float)Math.Cos(initialAngle), (float)Math.Sin(initialAngle));
+                }
+                
+                _enemyShips.Add(enemyShip);
+            }
+            
+            System.Console.WriteLine($"[ENEMY SHIPS] Created {_enemyShips.Count} enemy ships at positions:");
+            foreach (var enemyShip in _enemyShips)
+            {
+                System.Console.WriteLine($"  Enemy ship at ({enemyShip.Position.X:F0}, {enemyShip.Position.Y:F0})");
+            }
+            
             // Initialize camera to center on player
             _cameraPosition = mapCenter;
             
@@ -380,6 +460,9 @@ namespace Planet9.Scenes
             
             _minimapFriendlyDotTexture = new Texture2D(GraphicsDevice, 1, 1);
             _minimapFriendlyDotTexture.SetData(new[] { Color.Lime }); // Green for friendly ships
+            
+            _minimapEnemyDotTexture = new Texture2D(GraphicsDevice, 1, 1);
+            _minimapEnemyDotTexture.SetData(new[] { Color.Red }); // Red for enemy ships
             
             _minimapViewportOutlineTexture = new Texture2D(GraphicsDevice, 1, 1);
             _minimapViewportOutlineTexture.SetData(new[] { Color.White }); // White so color can be controlled via Draw parameter
@@ -459,12 +542,19 @@ namespace Planet9.Scenes
                     _playerShip.MoveSpeed = _speedSlider.Value;
                     _speedLabel.Text = $"Ship Speed: {_speedSlider.Value:F0}";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.MoveSpeed = _speedSlider.Value;
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.MoveSpeed = _speedSlider.Value;
                         }
                     }
                     
@@ -508,12 +598,19 @@ namespace Planet9.Scenes
                     _playerShip.RotationSpeed = _turnRateSlider.Value;
                     _turnRateLabel.Text = $"Ship Turn Rate: {_turnRateSlider.Value:F1}";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.RotationSpeed = _turnRateSlider.Value;
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.RotationSpeed = _turnRateSlider.Value;
                         }
                     }
                     
@@ -643,12 +740,19 @@ namespace Planet9.Scenes
                     _playerShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
                     _aimRotationSpeedLabel.Text = $"Ship Idle Rotation Speed: {_aimRotationSpeedSlider.Value:F1}";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.AimRotationSpeed = _aimRotationSpeedSlider.Value;
                         }
                     }
                     
@@ -692,12 +796,19 @@ namespace Planet9.Scenes
                     _playerShip.Inertia = _inertiaSlider.Value;
                     _inertiaLabel.Text = $"Ship Inertia: {_inertiaSlider.Value:F2}";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.Inertia = _inertiaSlider.Value;
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.Inertia = _inertiaSlider.Value;
                         }
                     }
                     
@@ -741,13 +852,19 @@ namespace Planet9.Scenes
                     _playerShip.Drift = _driftSlider.Value;
                     _driftLabel.Text = $"Ship Drift: {_driftSlider.Value:F2}";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
-                    // This ensures friendly ships use the drift value from their own class settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.Drift = _driftSlider.Value; // Update from FriendlyShip settings
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.Drift = _driftSlider.Value; // Update from EnemyShip settings
                         }
                     }
                     
@@ -803,6 +920,14 @@ namespace Planet9.Scenes
                     foreach (var friendlyShip in _friendlyShips)
                     {
                         friendlyShip.AvoidanceDetectionRange = _avoidanceRangeSlider.Value;
+                    }
+                }
+                else if (_currentShipClassIndex == 2)
+                {
+                    // EnemyShip class - update all enemy ships
+                    foreach (var enemyShip in _enemyShips)
+                    {
+                        enemyShip.AvoidanceDetectionRange = _avoidanceRangeSlider.Value;
                     }
                 }
                 else if (_playerShip != null)
@@ -910,12 +1035,19 @@ namespace Planet9.Scenes
                     _playerShip.LookAheadDistance = _lookAheadSlider.Value;
                     _lookAheadLabel.Text = $"Look-Ahead Distance: {_lookAheadSlider.Value:F2}x";
                     
-                    // Also update all friendly ships if we're editing FriendlyShip settings
+                    // Also update all ships of the current class
                     if (_currentShipClassIndex == 1)
                     {
                         foreach (var friendlyShip in _friendlyShips)
                         {
                             friendlyShip.LookAheadDistance = _lookAheadSlider.Value;
+                        }
+                    }
+                    else if (_currentShipClassIndex == 2)
+                    {
+                        foreach (var enemyShip in _enemyShips)
+                        {
+                            enemyShip.LookAheadDistance = _lookAheadSlider.Value;
                         }
                     }
                     
@@ -1402,7 +1534,7 @@ namespace Planet9.Scenes
             // Ship name label
             _previewShipLabel = new Label
             {
-                Text = "PlayerShip (1/2)",
+                Text = "PlayerShip (1/3)",
                 TextColor = Color.Yellow,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -1424,9 +1556,9 @@ namespace Planet9.Scenes
             {
                 _previewShipIndex--;
                 if (_previewShipIndex < 0)
-                    _previewShipIndex = 1; // Wrap to last (ship2)
+                    _previewShipIndex = 2; // Wrap to last (EnemyShip)
                 UpdatePreviewShipLabel();
-                // Switch player ship class to match preview
+                // Switch ship class to match preview
                 SwitchShipClass(_previewShipIndex);
             };
             _previewPanel.Widgets.Add(_previewLeftButton);
@@ -1444,10 +1576,10 @@ namespace Planet9.Scenes
             _previewRightButton.Click += (s, a) => 
             {
                 _previewShipIndex++;
-                if (_previewShipIndex > 1)
-                    _previewShipIndex = 0; // Wrap to ship1
+                if (_previewShipIndex > 2)
+                    _previewShipIndex = 0; // Wrap to PlayerShip
                 UpdatePreviewShipLabel();
-                // Switch player ship class to match preview
+                // Switch ship class to match preview
                 SwitchShipClass(_previewShipIndex);
             };
             _previewPanel.Widgets.Add(_previewRightButton);
@@ -1473,6 +1605,7 @@ namespace Planet9.Scenes
             {
                 _previewShip1Texture = Content.Load<Texture2D>("ship1-256");
                 _previewShip2Texture = Content.Load<Texture2D>("ship2-256");
+                // EnemyShip uses ship1-256 texture (same as PlayerShip)
             }
             catch (System.Exception ex)
             {
@@ -1978,18 +2111,18 @@ namespace Planet9.Scenes
                 {
                     _previewShipIndex--;
                     if (_previewShipIndex < 0)
-                        _previewShipIndex = 1; // Wrap to ship2
+                        _previewShipIndex = 2; // Wrap to EnemyShip
                     UpdatePreviewShipLabel();
-                    // Switch player ship class to match preview
+                    // Switch ship class to match preview
                     SwitchShipClass(_previewShipIndex);
                 }
                 if (keyboardState.IsKeyDown(Keys.Right) && !_previousKeyboardState.IsKeyDown(Keys.Right))
                 {
                     _previewShipIndex++;
-                    if (_previewShipIndex > 1)
-                        _previewShipIndex = 0; // Wrap to ship1
+                    if (_previewShipIndex > 2)
+                        _previewShipIndex = 0; // Wrap to PlayerShip
                     UpdatePreviewShipLabel();
-                    // Switch player ship class to match preview
+                    // Switch ship class to match preview
                     SwitchShipClass(_previewShipIndex);
                 }
             }
@@ -2022,7 +2155,7 @@ namespace Planet9.Scenes
                 _previewDesktop?.UpdateInput();
                 
                 // Get the currently previewed ship texture
-                Texture2D? shipTexture = _previewShipIndex == 0 ? _previewShip1Texture : _previewShip2Texture;
+                Texture2D? shipTexture = _previewShipIndex == 0 ? _previewShip1Texture : (_previewShipIndex == 1 ? _previewShip2Texture : _previewShip1Texture);
                     
                 if (_previewPanel != null && _previewCoordinateLabel != null && shipTexture != null)
                 {
@@ -2220,44 +2353,61 @@ namespace Planet9.Scenes
             // Right mouse button to fire lasers
             if (mouseState.RightButton == ButtonState.Pressed && !_wasRightButtonPressed && !isMouseOverAnyUI)
             {
-                // Fire lasers from player ship positions in the direction the ship is facing
+                // Fire lasers from player ship positions in the direction of the cursor
                 if (_playerShip != null)
                 {
-                    var shipTexture = _playerShip.GetTexture();
-                    if (shipTexture == null) return;
+                    // Convert mouse position to world coordinates
+                    var mouseScreenPos = new Vector2(mouseState.X, mouseState.Y);
+                    var mouseWorldX = (mouseScreenPos.X - GraphicsDevice.Viewport.Width / 2f) / _cameraZoom + _cameraPosition.X;
+                    var mouseWorldY = (mouseScreenPos.Y - GraphicsDevice.Viewport.Height / 2f) / _cameraZoom + _cameraPosition.Y;
+                    var mouseWorldPos = new Vector2(mouseWorldX, mouseWorldY);
                     
-                    float textureCenterX = shipTexture.Width / 2f;
-                    float textureCenterY = shipTexture.Height / 2f;
-                    float shipRotation = _playerShip.Rotation;
-                    float cos = (float)Math.Cos(shipRotation);
-                    float sin = (float)Math.Sin(shipRotation);
-                    
-                    // Helper function to create laser from sprite coordinates
-                    Action<float, float> fireLaserFromSpriteCoords = (float spriteX, float spriteY) =>
+                    // Calculate direction to cursor for laser firing
+                    var directionToCursor = mouseWorldPos - _playerShip.Position;
+                    if (directionToCursor.LengthSquared() > 0.1f)
                     {
-                        // Convert sprite coordinates to offset from ship center
-                        float offsetX = spriteX - textureCenterX;
-                        float offsetY = spriteY - textureCenterY;
+                        directionToCursor.Normalize();
+                        // Calculate laser direction (angle to cursor)
+                        float laserDirection = (float)Math.Atan2(directionToCursor.Y, directionToCursor.X) + MathHelper.PiOver2;
                         
-                        // Rotate the offset by ship's rotation to get world-space offset
-                        float rotatedX = offsetX * cos - offsetY * sin;
-                        float rotatedY = offsetX * sin + offsetY * cos;
-                        
-                        // Calculate laser spawn position
-                        Vector2 laserSpawnPosition = _playerShip.Position + new Vector2(rotatedX, rotatedY);
-                        
-                        var laser = new Laser(laserSpawnPosition, shipRotation, GraphicsDevice);
-                        _lasers.Add(laser);
-                    };
-                    
-                    // Fire first laser from sprite coordinates (210, 50)
-                    fireLaserFromSpriteCoords(210f, 50f);
-                    
-                    // Fire second laser from sprite coordinates (40, 50)
-                    fireLaserFromSpriteCoords(40f, 50f);
-                    
-                    // Play laser fire sound effect with SFX volume
-                    _laserFireSound?.Play(_sfxVolume, 0f, 0f);
+                        var shipTexture = _playerShip.GetTexture();
+                        if (shipTexture != null)
+                        {
+                            float textureCenterX = shipTexture.Width / 2f;
+                            float textureCenterY = shipTexture.Height / 2f;
+                            float shipRotation = _playerShip.Rotation;
+                            float cos = (float)Math.Cos(shipRotation);
+                            float sin = (float)Math.Sin(shipRotation);
+                            
+                            // Helper function to create laser from sprite coordinates
+                            Action<float, float> fireLaserFromSpriteCoords = (float spriteX, float spriteY) =>
+                            {
+                                // Convert sprite coordinates to offset from ship center
+                                float offsetX = spriteX - textureCenterX;
+                                float offsetY = spriteY - textureCenterY;
+                                
+                                // Rotate the offset by ship's rotation to get world-space offset
+                                float rotatedX = offsetX * cos - offsetY * sin;
+                                float rotatedY = offsetX * sin + offsetY * cos;
+                                
+                                // Calculate laser spawn position
+                                Vector2 laserSpawnPosition = _playerShip.Position + new Vector2(rotatedX, rotatedY);
+                                
+                                // Fire laser in direction of cursor, not ship rotation
+                                var laser = new Laser(laserSpawnPosition, laserDirection, GraphicsDevice, _playerShip.Damage, _playerShip);
+                                _lasers.Add(laser);
+                            };
+                            
+                            // Fire first laser from sprite coordinates (210, 50)
+                            fireLaserFromSpriteCoords(210f, 50f);
+                            
+                            // Fire second laser from sprite coordinates (40, 50)
+                            fireLaserFromSpriteCoords(40f, 50f);
+                            
+                            // Play laser fire sound effect with SFX volume
+                            _laserFireSound?.Play(_sfxVolume, 0f, 0f);
+                        }
+                    }
                 }
             }
             _wasRightButtonPressed = mouseState.RightButton == ButtonState.Pressed;
@@ -2331,10 +2481,11 @@ namespace Planet9.Scenes
                                  keyboardState.IsKeyDown(Keys.S) || keyboardState.IsKeyDown(Keys.D);
             
             // Check if camera is panning (WASD pressed, panning to player, or camera has velocity from manual control)
+            // Note: This is only used for camera movement, not for ship behavior
             bool isCameraPanning = _isPanningToPlayer || isWASDPressed || _cameraVelocity.LengthSquared() > 1f || !_cameraFollowingPlayer;
             
-            // Update player ship aim target (mouse cursor position when not actively moving AND camera is not panning)
-            if (_playerShip != null && !_playerShip.IsActivelyMoving() && !isCameraPanning)
+            // Update player ship aim target (mouse cursor position - always allow aiming, regardless of camera state)
+            if (_playerShip != null)
             {
                 // Convert mouse position to world coordinates for aiming
                 var mouseScreenPos = new Vector2(mouseState.X, mouseState.Y);
@@ -2342,10 +2493,6 @@ namespace Planet9.Scenes
                 var mouseWorldY = (mouseScreenPos.Y - GraphicsDevice.Viewport.Height / 2f) / _cameraZoom + _cameraPosition.Y;
                 var mouseWorldPos = new Vector2(mouseWorldX, mouseWorldY);
                 _playerShip.SetAimTarget(mouseWorldPos);
-            }
-            else if (_playerShip != null)
-            {
-                _playerShip.SetAimTarget(null); // Clear aim target when actively moving or camera is panning
             }
             
             // Update player ship first so we have current position
@@ -2584,8 +2731,6 @@ namespace Planet9.Scenes
                 // Avoid other friendly ships with orbital motion (orbit around each other when navigating past)
                 float avoidanceRadius = friendlyShip.AvoidanceDetectionRange; // Use ship's own setting
                 float avoidanceForce = 300f; // Increased avoidance force for better steering
-                const float minSeparationDistance = 80f; // Minimum distance ships should maintain
-                const float collisionDistance = 100f; // Distance at which ships are considered colliding
                 
                 // Calculate look-ahead target position (where the ship is looking ahead)
                 Vector2 lookAheadTarget = friendlyShip.Position;
@@ -3189,11 +3334,387 @@ namespace Planet9.Scenes
                 
                 // Behavior system: Update and execute current behavior
                 UpdateFriendlyShipBehavior(friendlyShip, deltaTime);
+            }
+            
+            // Update enemy ships with aggressive behavior and collision avoidance (same system as friendly ships)
+            foreach (var enemyShip in _enemyShips)
+            {
+                // Update enemy ship movement (inherits from FriendlyShip, so uses same Update logic)
+                enemyShip.Update(gameTime);
+                
+                // Collision avoidance: use same orbital motion system as friendly ships
+                float avoidanceRadius = enemyShip.AvoidanceDetectionRange;
+                float avoidanceForce = 300f;
+                Vector2 avoidanceVector = Vector2.Zero;
+                
+                // Calculate look-ahead target position (where the ship is looking ahead)
+                Vector2 lookAheadTarget = enemyShip.Position;
+                if (enemyShip.IsActivelyMoving())
+                {
+                    float shipRotation = enemyShip.Rotation;
+                    Vector2 lookAheadDirection = new Vector2(
+                        (float)System.Math.Sin(shipRotation),
+                        -(float)System.Math.Cos(shipRotation)
+                    );
+                    float lookAheadDist = enemyShip.MoveSpeed * enemyShip.LookAheadDistance;
+                    lookAheadTarget = enemyShip.Position + lookAheadDirection * lookAheadDist;
+                }
+                
+                // Avoid friendly ships with orbital motion (same as friendly ships use)
+                foreach (var friendlyShip in _friendlyShips)
+                {
+                    Vector2 toFriendly = friendlyShip.Position - enemyShip.Position;
+                    float distance = toFriendly.Length();
+                    float otherAvoidanceRadius = friendlyShip.AvoidanceDetectionRange;
+                    float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherAvoidanceRadius);
+                    float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                    
+                    // Check if look-ahead target is within other ship's avoidance radius
+                    Vector2 toLookAheadFromFriendly = lookAheadTarget - friendlyShip.Position;
+                    float lookAheadDistanceFromFriendly = toLookAheadFromFriendly.Length();
+                    bool lookAheadInRadius = lookAheadDistanceFromFriendly < effectiveAvoidanceRadius;
+                    
+                    if ((distance < avoidanceDetectionRange || lookAheadInRadius) && distance > 0.1f)
+                    {
+                        toFriendly.Normalize();
+                        Vector2 radialDirection = -toFriendly;
+                        
+                        // Calculate tangential direction for orbital motion
+                        Vector2 tangentialDirection;
+                        if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                        {
+                            Vector2 shipVelocity = enemyShip.Velocity;
+                            shipVelocity.Normalize();
+                            Vector2 tan1 = new Vector2(-toFriendly.Y, toFriendly.X);
+                            Vector2 tan2 = new Vector2(toFriendly.Y, -toFriendly.X);
+                            float dot1 = Vector2.Dot(shipVelocity, tan1);
+                            float dot2 = Vector2.Dot(shipVelocity, tan2);
+                            tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                        }
+                        else
+                        {
+                            tangentialDirection = new Vector2(-toFriendly.Y, toFriendly.X);
+                        }
+                        tangentialDirection.Normalize();
+                        
+                        // Calculate avoidance strength
+                        float avoidanceStrength;
+                        if (lookAheadInRadius)
+                        {
+                            float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromFriendly) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.5f + lookAheadPenetration * 2f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius)
+                        {
+                            float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.0f + penetration * 1.5f;
+                        }
+                        else
+                        {
+                            avoidanceStrength = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                        }
+                        
+                        // Blend radial and tangential forces for orbital motion
+                        float radialWeight, tangentialWeight;
+                        if (distance < effectiveAvoidanceRadius)
+                        {
+                            radialWeight = 0.9f;
+                            tangentialWeight = 0.1f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.1f)
+                        {
+                            radialWeight = 0.7f;
+                            tangentialWeight = 0.3f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.3f)
+                        {
+                            radialWeight = 0.5f;
+                            tangentialWeight = 0.5f;
+                        }
+                        else
+                        {
+                            radialWeight = 0.2f;
+                            tangentialWeight = 0.8f;
+                        }
+                        
+                        Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                        orbitalDirection.Normalize();
+                        avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce;
+                    }
+                }
+                
+                // Avoid player ship with orbital motion (but still pursue for attack)
+                if (_playerShip != null)
+                {
+                    Vector2 toPlayer = _playerShip.Position - enemyShip.Position;
+                    float distance = toPlayer.Length();
+                    float playerAvoidanceRadius = _playerShip.AvoidanceDetectionRange;
+                    float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, playerAvoidanceRadius);
+                    float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f; // Increased range to prevent getting stuck
+                    
+                    // Check if look-ahead target is within player's avoidance radius
+                    Vector2 toLookAheadFromPlayer = lookAheadTarget - _playerShip.Position;
+                    float lookAheadDistanceFromPlayer = toLookAheadFromPlayer.Length();
+                    bool lookAheadInPlayerRadius = lookAheadDistanceFromPlayer < effectiveAvoidanceRadius;
+                    
+                    // Avoid when close or when look-ahead hits player's radius
+                    if ((distance < avoidanceDetectionRange || lookAheadInPlayerRadius) && distance > 0.1f)
+                    {
+                        toPlayer.Normalize();
+                        Vector2 radialDirection = -toPlayer;
+                        
+                        // Calculate tangential direction
+                        Vector2 tangentialDirection;
+                        if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                        {
+                            Vector2 shipVelocity = enemyShip.Velocity;
+                            shipVelocity.Normalize();
+                            Vector2 tan1 = new Vector2(-toPlayer.Y, toPlayer.X);
+                            Vector2 tan2 = new Vector2(toPlayer.Y, -toPlayer.X);
+                            float dot1 = Vector2.Dot(shipVelocity, tan1);
+                            float dot2 = Vector2.Dot(shipVelocity, tan2);
+                            tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                        }
+                        else
+                        {
+                            tangentialDirection = new Vector2(-toPlayer.Y, toPlayer.X);
+                        }
+                        tangentialDirection.Normalize();
+                        
+                        // Calculate avoidance strength - stronger when very close to prevent getting stuck
+                        float avoidanceStrength;
+                        if (distance < effectiveAvoidanceRadius)
+                        {
+                            // Inside avoidance radius - strong radial push away
+                            float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.5f + penetration * 2f; // Much stronger when inside radius
+                        }
+                        else if (lookAheadInPlayerRadius)
+                        {
+                            // Look-ahead is in radius - start turning
+                            float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromPlayer) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.2f + lookAheadPenetration * 1.5f;
+                        }
+                        else
+                        {
+                            // Approaching avoidance radius - moderate avoidance
+                            float approachFactor = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                            avoidanceStrength = 0.8f + approachFactor * 0.7f;
+                        }
+                        
+                        // Blend radial and tangential - more radial when very close to prevent getting stuck
+                        float radialWeight, tangentialWeight;
+                        if (distance < effectiveAvoidanceRadius)
+                        {
+                            // Very close - prioritize radial push away
+                            radialWeight = 0.8f;
+                            tangentialWeight = 0.2f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.1f)
+                        {
+                            // Close - balanced
+                            radialWeight = 0.6f;
+                            tangentialWeight = 0.4f;
+                        }
+                        else
+                        {
+                            // At safe distance - more orbital motion
+                            radialWeight = 0.3f;
+                            tangentialWeight = 0.7f;
+                        }
+                        
+                        Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                        orbitalDirection.Normalize();
+                        avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce; // Full force to prevent getting stuck
+                    }
+                }
+                
+                // Avoid other enemy ships with orbital motion
+                foreach (var otherEnemyShip in _enemyShips)
+                {
+                    if (otherEnemyShip == enemyShip) continue;
+                    
+                    Vector2 toOtherEnemy = otherEnemyShip.Position - enemyShip.Position;
+                    float distance = toOtherEnemy.Length();
+                    float otherAvoidanceRadius = otherEnemyShip.AvoidanceDetectionRange;
+                    float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherAvoidanceRadius);
+                    float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                    
+                    // Check if look-ahead target is within other enemy's avoidance radius
+                    Vector2 toLookAheadFromOtherEnemy = lookAheadTarget - otherEnemyShip.Position;
+                    float lookAheadDistanceFromOtherEnemy = toLookAheadFromOtherEnemy.Length();
+                    bool lookAheadInOtherEnemyRadius = lookAheadDistanceFromOtherEnemy < effectiveAvoidanceRadius;
+                    
+                    if ((distance < avoidanceDetectionRange || lookAheadInOtherEnemyRadius) && distance > 0.1f)
+                    {
+                        toOtherEnemy.Normalize();
+                        Vector2 radialDirection = -toOtherEnemy;
+                        
+                        // Calculate tangential direction
+                        Vector2 tangentialDirection;
+                        if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                        {
+                            Vector2 shipVelocity = enemyShip.Velocity;
+                            shipVelocity.Normalize();
+                            Vector2 tan1 = new Vector2(-toOtherEnemy.Y, toOtherEnemy.X);
+                            Vector2 tan2 = new Vector2(toOtherEnemy.Y, -toOtherEnemy.X);
+                            float dot1 = Vector2.Dot(shipVelocity, tan1);
+                            float dot2 = Vector2.Dot(shipVelocity, tan2);
+                            tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                        }
+                        else
+                        {
+                            tangentialDirection = new Vector2(-toOtherEnemy.Y, toOtherEnemy.X);
+                        }
+                        tangentialDirection.Normalize();
+                        
+                        // Calculate avoidance strength
+                        float avoidanceStrength;
+                        if (lookAheadInOtherEnemyRadius)
+                        {
+                            float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromOtherEnemy) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.5f + lookAheadPenetration * 2f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius)
+                        {
+                            float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                            avoidanceStrength = 1.0f + penetration * 1.5f;
+                        }
+                        else
+                        {
+                            avoidanceStrength = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                        }
+                        
+                        // Blend radial and tangential forces
+                        float radialWeight, tangentialWeight;
+                        if (distance < effectiveAvoidanceRadius)
+                        {
+                            radialWeight = 0.9f;
+                            tangentialWeight = 0.1f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.1f)
+                        {
+                            radialWeight = 0.7f;
+                            tangentialWeight = 0.3f;
+                        }
+                        else if (distance < effectiveAvoidanceRadius * 1.3f)
+                        {
+                            radialWeight = 0.5f;
+                            tangentialWeight = 0.5f;
+                        }
+                        else
+                        {
+                            radialWeight = 0.2f;
+                            tangentialWeight = 0.8f;
+                        }
+                        
+                        Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                        orbitalDirection.Normalize();
+                        avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce;
+                    }
+                }
+                
+                // Apply avoidance vector if significant
+                if (avoidanceVector.LengthSquared() > 100f)
+                {
+                    Vector2 currentTarget = enemyShip.TargetPosition;
+                    Vector2 avoidanceTarget = enemyShip.Position + avoidanceVector * deltaTime;
+                    // Blend avoidance with current target (don't completely override pursuit)
+                    Vector2 blendedTarget = Vector2.Lerp(currentTarget, avoidanceTarget, 0.3f);
+                    enemyShip.SetTargetPosition(blendedTarget);
+                }
+                
+                // Update ship position and rotation
+                enemyShip.Update(gameTime);
+                
+                // Ship-to-ship collision detection and resolution (same as friendly ships)
+                float shipAvoidanceRadius = enemyShip.AvoidanceDetectionRange;
+                
+                // Collision with friendly ships
+                foreach (var friendlyShip in _friendlyShips)
+                {
+                    Vector2 direction = enemyShip.Position - friendlyShip.Position;
+                    float distance = direction.Length();
+                    float otherAvoidanceRadius = friendlyShip.AvoidanceDetectionRange;
+                    float minSafeDistance = Math.Max(shipAvoidanceRadius, otherAvoidanceRadius);
+                    
+                    if (distance < minSafeDistance && distance > 0.1f)
+                    {
+                        float overlap = minSafeDistance - distance;
+                        direction.Normalize();
+                        float pushDistance = overlap * 0.5f;
+                        enemyShip.Position += direction * pushDistance;
+                        friendlyShip.Position -= direction * pushDistance;
+                        
+                        if (distance < minSafeDistance * 0.8f)
+                        {
+                            enemyShip.StopMoving();
+                            friendlyShip.StopMoving();
+                        }
+                    }
+                }
+                
+                // Collision with player - push away more aggressively and don't stop moving
+                if (_playerShip != null)
+                {
+                    Vector2 direction = enemyShip.Position - _playerShip.Position;
+                    float distance = direction.Length();
+                    float playerAvoidanceRadiusForCollision = _playerShip.AvoidanceDetectionRange;
+                    float minSafeDistance = Math.Max(shipAvoidanceRadius, playerAvoidanceRadiusForCollision);
+                    
+                    if (distance < minSafeDistance && distance > 0.1f)
+                    {
+                        float overlap = minSafeDistance - distance;
+                        direction.Normalize();
+                        // Push away more aggressively (1.5x the overlap)
+                        float pushDistance = overlap * 1.5f;
+                        enemyShip.Position += direction * pushDistance;
+                        
+                        // Don't stop moving - instead, set a target away from player to back away
+                        if (distance < minSafeDistance * 0.9f)
+                        {
+                            // Set target position away from player to actively back away
+                            float backAwayDistance = minSafeDistance * 1.5f;
+                            Vector2 backAwayTarget = enemyShip.Position + direction * backAwayDistance;
+                            enemyShip.SetTargetPosition(backAwayTarget);
+                        }
+                    }
+                }
+                
+                // Collision with other enemy ships
+                foreach (var otherEnemyShip in _enemyShips)
+                {
+                    if (otherEnemyShip == enemyShip) continue;
+                    
+                    Vector2 direction = enemyShip.Position - otherEnemyShip.Position;
+                    float distance = direction.Length();
+                    float otherAvoidanceRadius = otherEnemyShip.AvoidanceDetectionRange;
+                    float minSafeDistance = Math.Max(shipAvoidanceRadius, otherAvoidanceRadius);
+                    
+                    if (distance < minSafeDistance && distance > 0.1f)
+                    {
+                        float overlap = minSafeDistance - distance;
+                        direction.Normalize();
+                        float pushDistance = overlap * 0.5f;
+                        enemyShip.Position += direction * pushDistance;
+                        otherEnemyShip.Position -= direction * pushDistance;
+                        
+                        if (distance < minSafeDistance * 0.8f)
+                        {
+                            enemyShip.StopMoving();
+                            otherEnemyShip.StopMoving();
+                        }
+                    }
+                }
+                
+                // Behavior system: Update and execute aggressive behavior
+                UpdateEnemyShipBehavior(enemyShip, deltaTime);
                 
                 // Clamp position AFTER behavior system (in case behavior teleported ship off-screen)
-                clampedX = MathHelper.Clamp(friendlyShip.Position.X, shipMargin, MapSize - shipMargin);
-                clampedY = MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, MapSize - shipMargin);
-                friendlyShip.Position = new Vector2(clampedX, clampedY);
+                const float shipMargin = 30f; // Keep ships at least 30 pixels from edges
+                float clampedX = MathHelper.Clamp(enemyShip.Position.X, shipMargin, MapSize - shipMargin);
+                float clampedY = MathHelper.Clamp(enemyShip.Position.Y, shipMargin, MapSize - shipMargin);
+                enemyShip.Position = new Vector2(clampedX, clampedY);
             }
             
             // Update lasers
@@ -3202,7 +3723,188 @@ namespace Planet9.Scenes
                 laser.Update(gameTime);
             }
             
-            // Remove lasers that are off screen or too far away
+            // Update active explosions (continue even after ships are destroyed)
+            for (int i = _activeExplosions.Count - 1; i >= 0; i--)
+            {
+                _activeExplosions[i].Update(deltaTime);
+                if (!_activeExplosions[i].IsActive)
+                {
+                    _activeExplosions.RemoveAt(i); // Remove when explosion is done
+                }
+            }
+            
+            // Check for laser-ship collisions and apply damage
+            foreach (var laser in _lasers.ToList()) // Use ToList to avoid modification during iteration
+            {
+                if (!laser.IsActive) continue;
+                
+                // Check collision with player ship
+                if (_playerShip != null && laser.Owner != _playerShip && _playerShip.IsActive)
+                {
+                    float distance = Vector2.Distance(laser.Position, _playerShip.Position);
+                    if (distance < 64f) // Ship collision radius (half of 128px ship size)
+                    {
+                        _playerShip.Health -= laser.Damage;
+                        laser.IsActive = false; // Remove laser on hit
+                        
+                        if (_playerShip.Health <= 0f)
+                        {
+                            _playerShip.Health = 0f;
+                            // Trigger explosion effect before deactivating
+                            var explosionEffect = _playerShip.GetExplosionEffect();
+                            if (explosionEffect != null)
+                            {
+                                explosionEffect.Explode(_playerShip.Position);
+                                _activeExplosions.Add(explosionEffect); // Track explosion to continue updating/drawing
+                                
+                                // Play explosion sound
+                                if (_explosionSound != null)
+                                {
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Playing explosion sound. SFX Enabled: {_sfxEnabled}, Volume: {_sfxVolume}");
+                                    var explosionSoundInstance = _explosionSound.CreateInstance();
+                                    explosionSoundInstance.Volume = _sfxEnabled ? _sfxVolume : 0f;
+                                    explosionSoundInstance.Play();
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Sound instance created. State: {explosionSoundInstance.State}, Volume: {explosionSoundInstance.Volume}");
+                                }
+                                else
+                                {
+                                    System.Console.WriteLine("[EXPLOSION SOUND] Warning: _explosionSound is null!");
+                                }
+                            }
+                            _playerShip.IsActive = false;
+                            System.Console.WriteLine("[PLAYER] Player ship destroyed!");
+                        }
+                        else
+                        {
+                            System.Console.WriteLine($"[PLAYER] Health: {_playerShip.Health:F1}/{_playerShip.MaxHealth:F1}");
+                        }
+                    }
+                }
+                
+                // Check collision with friendly ships
+                foreach (var friendlyShip in _friendlyShips.ToList())
+                {
+                    if (laser.Owner == friendlyShip || !friendlyShip.IsActive) continue;
+                    
+                    float distance = Vector2.Distance(laser.Position, friendlyShip.Position);
+                    if (distance < 64f) // Ship collision radius
+                    {
+                        friendlyShip.Health -= laser.Damage;
+                        laser.IsActive = false; // Remove laser on hit
+                        
+                        // Only switch to Flee behavior when hit by player's laser (not enemy lasers)
+                        // Flee like enemies do - same behavior, same duration, but triggered on single hit from player
+                        if (friendlyShip.Health > 0f && laser.Owner == _playerShip)
+                        {
+                            // Ensure behavior dictionary has this ship
+                            if (!_friendlyShipBehaviors.ContainsKey(friendlyShip))
+                            {
+                                _friendlyShipBehaviors[friendlyShip] = FriendlyShipBehavior.Flee;
+                            }
+                            
+                            // Always switch to Flee and reset timer, regardless of current behavior
+                            // Use same flee duration as enemies (10 seconds)
+                            _friendlyShipBehaviors[friendlyShip] = FriendlyShipBehavior.Flee;
+                            _friendlyShipBehaviorTimer[friendlyShip] = 10.0f; // Flee for 10 seconds (same as enemies)
+                            friendlyShip.IsIdle = false; // Ensure ship starts moving
+                            friendlyShip.IsFleeing = true; // Mark ship as fleeing to activate damage effect
+                            System.Console.WriteLine($"[FRIENDLY] Hit by player! Health: {friendlyShip.Health:F1}/{friendlyShip.MaxHealth:F1} - Switching to Flee behavior");
+                        }
+                        
+                        if (friendlyShip.Health <= 0f)
+                        {
+                            friendlyShip.Health = 0f;
+                            // Trigger explosion effect before removing
+                            var explosionEffect = friendlyShip.GetExplosionEffect();
+                            if (explosionEffect != null)
+                            {
+                                explosionEffect.Explode(friendlyShip.Position);
+                                _activeExplosions.Add(explosionEffect); // Track explosion to continue updating/drawing
+                                
+                                // Play explosion sound
+                                if (_explosionSound != null)
+                                {
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Playing explosion sound (friendly). SFX Enabled: {_sfxEnabled}, Volume: {_sfxVolume}");
+                                    var explosionSoundInstance = _explosionSound.CreateInstance();
+                                    explosionSoundInstance.Volume = _sfxEnabled ? _sfxVolume : 0f;
+                                    explosionSoundInstance.Play();
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Sound instance created. State: {explosionSoundInstance.State}, Volume: {explosionSoundInstance.Volume}");
+                                }
+                            }
+                            friendlyShip.IsActive = false;
+                            _friendlyShips.Remove(friendlyShip);
+                            if (_friendlyShipBehaviors.ContainsKey(friendlyShip))
+                                _friendlyShipBehaviors.Remove(friendlyShip);
+                            if (_friendlyShipBehaviorTimer.ContainsKey(friendlyShip))
+                                _friendlyShipBehaviorTimer.Remove(friendlyShip);
+                            System.Console.WriteLine("[FRIENDLY] Friendly ship destroyed!");
+                        }
+                    }
+                }
+                
+                // Check collision with enemy ships
+                foreach (var enemyShip in _enemyShips.ToList())
+                {
+                    if (laser.Owner == enemyShip || !enemyShip.IsActive) continue;
+                    
+                    float distance = Vector2.Distance(laser.Position, enemyShip.Position);
+                    if (distance < 64f) // Ship collision radius
+                    {
+                        enemyShip.Health -= laser.Damage;
+                        laser.IsActive = false; // Remove laser on hit
+                        
+                        // Switch to Flee behavior when health <= 10
+                        if (enemyShip.Health <= 10f && enemyShip.Health > 0f)
+                        {
+                            if (_enemyShipBehaviors.ContainsKey(enemyShip))
+                            {
+                                _enemyShipBehaviors[enemyShip] = FriendlyShipBehavior.Flee;
+                                // Set a timer for flee behavior (flee for 10 seconds or until health recovers)
+                                _enemyShipBehaviorTimer[enemyShip] = 10.0f;
+                                enemyShip.IsFleeing = true; // Mark ship as fleeing to activate damage effect
+                                System.Console.WriteLine($"[ENEMY] Low health! Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Switching to Flee behavior");
+                            }
+                        }
+                        
+                        if (enemyShip.Health <= 0f)
+                        {
+                            enemyShip.Health = 0f;
+                            // Trigger explosion effect before removing
+                            var explosionEffect = enemyShip.GetExplosionEffect();
+                            if (explosionEffect != null)
+                            {
+                                explosionEffect.Explode(enemyShip.Position);
+                                _activeExplosions.Add(explosionEffect); // Track explosion to continue updating/drawing
+                                
+                                // Play explosion sound
+                                if (_explosionSound != null)
+                                {
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Playing explosion sound (enemy). SFX Enabled: {_sfxEnabled}, Volume: {_sfxVolume}");
+                                    var explosionSoundInstance = _explosionSound.CreateInstance();
+                                    explosionSoundInstance.Volume = _sfxEnabled ? _sfxVolume : 0f;
+                                    explosionSoundInstance.Play();
+                                    System.Console.WriteLine($"[EXPLOSION SOUND] Sound instance created. State: {explosionSoundInstance.State}, Volume: {explosionSoundInstance.Volume}");
+                                }
+                            }
+                            enemyShip.IsActive = false;
+                            _enemyShips.Remove(enemyShip);
+                            if (_enemyShipBehaviors.ContainsKey(enemyShip))
+                                _enemyShipBehaviors.Remove(enemyShip);
+                            if (_enemyShipBehaviorTimer.ContainsKey(enemyShip))
+                                _enemyShipBehaviorTimer.Remove(enemyShip);
+                            if (_enemyShipAttackCooldown.ContainsKey(enemyShip))
+                                _enemyShipAttackCooldown.Remove(enemyShip);
+                            System.Console.WriteLine("[ENEMY] Enemy ship destroyed!");
+                        }
+                        else
+                        {
+                            System.Console.WriteLine($"[ENEMY] Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1}");
+                        }
+                    }
+                }
+            }
+            
+            // Remove lasers that are off screen, too far away, or inactive
             _lasers.RemoveAll(laser => 
                 !laser.IsActive || 
                 laser.Position.X < -1000 || laser.Position.X > 9192 ||
@@ -3347,6 +4049,7 @@ namespace Planet9.Scenes
         private FriendlyShipBehavior GetRandomBehavior()
         {
             // Weight behaviors: 30% Idle, 25% Patrol, 20% LongDistance, 25% Wander
+            // Note: Aggressive behavior is not included here - it's only for enemy ships
             double roll = _random.NextDouble();
             if (roll < _shipIdleRate)
                 return FriendlyShipBehavior.Idle;
@@ -3356,6 +4059,12 @@ namespace Planet9.Scenes
                 return FriendlyShipBehavior.LongDistance;
             else
                 return FriendlyShipBehavior.Wander;
+        }
+        
+        private FriendlyShipBehavior GetEnemyBehavior()
+        {
+            // Enemy ships always use Aggressive behavior
+            return FriendlyShipBehavior.Aggressive;
         }
         
         private float GetBehaviorDuration(FriendlyShipBehavior behavior)
@@ -3384,30 +4093,90 @@ namespace Planet9.Scenes
                 _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(_friendlyShipBehaviors[friendlyShip]);
             }
             
-            // Decrement behavior timer
-            if (_friendlyShipBehaviorTimer.ContainsKey(friendlyShip))
+            // Check if currently fleeing - if fully healed, resume normal behavior immediately
+            FriendlyShipBehavior friendlyCurrentBehavior = _friendlyShipBehaviors[friendlyShip];
+            if (friendlyCurrentBehavior == FriendlyShipBehavior.Flee && friendlyShip.Health >= friendlyShip.MaxHealth)
             {
-                _friendlyShipBehaviorTimer[friendlyShip] -= deltaTime;
-                
-                // Check if behavior should transition
-                if (_friendlyShipBehaviorTimer[friendlyShip] <= 0f)
+                // Fully healed, switch back to random behavior immediately
+                FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                // Don't randomly select Flee
+                while (newBehavior == FriendlyShipBehavior.Flee)
                 {
-                    // Transition to new behavior
-                    FriendlyShipBehavior newBehavior = GetRandomBehavior();
-                    FriendlyShipBehavior oldBehavior = _friendlyShipBehaviors[friendlyShip];
-                    _friendlyShipBehaviors[friendlyShip] = newBehavior;
-                    _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(newBehavior);
-                    
-                    // If transitioning to Idle, stop the ship immediately and set idle flag
-                    if (newBehavior == FriendlyShipBehavior.Idle)
+                    newBehavior = GetRandomBehavior();
+                }
+                _friendlyShipBehaviors[friendlyShip] = newBehavior;
+                _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(newBehavior);
+                friendlyShip.IsFleeing = false; // No longer fleeing, stop damage effect
+                
+                // Face the direction the ship is moving when resuming behavior
+                if (friendlyShip.Velocity.LengthSquared() > 1f)
+                {
+                    float targetRotation = (float)System.Math.Atan2(friendlyShip.Velocity.Y, friendlyShip.Velocity.X) + MathHelper.PiOver2;
+                    friendlyShip.Rotation = targetRotation;
+                }
+                
+                if (newBehavior == FriendlyShipBehavior.Idle)
+                {
+                    friendlyShip.StopMoving();
+                    friendlyShip.IsIdle = true;
+                }
+                else
+                {
+                    friendlyShip.IsIdle = false;
+                }
+                
+                System.Console.WriteLine($"[FRIENDLY] Fully healed! Health: {friendlyShip.Health:F1}/{friendlyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
+            }
+            // Decrement behavior timer (only if not fleeing or not fully healed)
+            else if (_friendlyShipBehaviorTimer.ContainsKey(friendlyShip))
+            {
+                // Only decrement timer if not fleeing (flee timer is managed separately)
+                if (friendlyCurrentBehavior != FriendlyShipBehavior.Flee)
+                {
+                    _friendlyShipBehaviorTimer[friendlyShip] -= deltaTime;
+                }
+                else
+                {
+                    // Still fleeing and not fully healed, continue fleeing - reset timer if needed
+                    if (_friendlyShipBehaviorTimer[friendlyShip] <= 0f)
                     {
-                        friendlyShip.StopMoving();
-                        friendlyShip.IsIdle = true;
+                        _friendlyShipBehaviorTimer[friendlyShip] = 10.0f; // Continue fleeing
                     }
                     else
                     {
-                        // Clear idle flag when transitioning to other behaviors
-                        friendlyShip.IsIdle = false;
+                        _friendlyShipBehaviorTimer[friendlyShip] -= deltaTime;
+                    }
+                }
+                
+                // Check if behavior should transition (timer-based transitions)
+                if (_friendlyShipBehaviorTimer[friendlyShip] <= 0f)
+                {
+                    // If currently fleeing (but not fully healed yet), continue fleeing
+                    if (friendlyCurrentBehavior == FriendlyShipBehavior.Flee)
+                    {
+                        // Still damaged, continue fleeing - reset timer
+                        _friendlyShipBehaviorTimer[friendlyShip] = 10.0f; // Continue fleeing
+                    }
+                    else
+                    {
+                        // Transition to new behavior (but not Flee - that's only triggered by damage)
+                        FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                        while (newBehavior == FriendlyShipBehavior.Flee)
+                        {
+                            newBehavior = GetRandomBehavior();
+                        }
+                        _friendlyShipBehaviors[friendlyShip] = newBehavior;
+                        _friendlyShipBehaviorTimer[friendlyShip] = GetBehaviorDuration(newBehavior);
+                        
+                        if (newBehavior == FriendlyShipBehavior.Idle)
+                        {
+                            friendlyShip.StopMoving();
+                            friendlyShip.IsIdle = true;
+                        }
+                        else
+                        {
+                            friendlyShip.IsIdle = false;
+                        }
                     }
                 }
             }
@@ -3416,7 +4185,7 @@ namespace Planet9.Scenes
             FriendlyShipBehavior currentBehavior = _friendlyShipBehaviors[friendlyShip];
             
             // Only execute behavior if ship is not actively moving (reached target) or if behavior requires immediate action
-            if (!friendlyShip.IsActivelyMoving() || currentBehavior == FriendlyShipBehavior.LongDistance || currentBehavior == FriendlyShipBehavior.Idle)
+            if (!friendlyShip.IsActivelyMoving() || currentBehavior == FriendlyShipBehavior.LongDistance || currentBehavior == FriendlyShipBehavior.Idle || currentBehavior == FriendlyShipBehavior.Flee)
             {
                 switch (currentBehavior)
                 {
@@ -3432,8 +4201,347 @@ namespace Planet9.Scenes
                     case FriendlyShipBehavior.Wander:
                         ExecuteWanderBehavior(friendlyShip);
                         break;
+                    case FriendlyShipBehavior.Aggressive:
+                        // Aggressive behavior should not be used for friendly ships
+                        // This is handled separately for enemy ships via UpdateEnemyShipBehavior
+                        break;
+                    case FriendlyShipBehavior.Flee:
+                        friendlyShip.IsFleeing = true; // Ensure flee flag is set while executing flee behavior
+                        ExecuteFleeBehavior(friendlyShip);
+                        break;
                 }
             }
+        }
+        
+        private void UpdateEnemyShipBehavior(EnemyShip enemyShip, float deltaTime)
+        {
+            // Initialize behavior if not set
+            if (!_enemyShipBehaviors.ContainsKey(enemyShip))
+            {
+                _enemyShipBehaviors[enemyShip] = GetRandomBehavior();
+                _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(_enemyShipBehaviors[enemyShip]);
+            }
+            
+            // Initialize behavior timer if not set
+            if (!_enemyShipBehaviorTimer.ContainsKey(enemyShip))
+            {
+                _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(_enemyShipBehaviors[enemyShip]);
+            }
+            
+            // Initialize attack cooldown if not set
+            if (!_enemyShipAttackCooldown.ContainsKey(enemyShip))
+            {
+                _enemyShipAttackCooldown[enemyShip] = 0f;
+            }
+            
+            // Check if player is within detection range
+            bool playerDetected = false;
+            if (_playerShip != null)
+            {
+                Vector2 toPlayer = _playerShip.Position - enemyShip.Position;
+                float distanceToPlayer = toPlayer.Length();
+                playerDetected = distanceToPlayer < EnemyPlayerDetectionRange;
+            }
+            
+            // If player is detected and not fleeing, switch to Aggressive behavior
+            if (playerDetected)
+            {
+                // Don't override Flee behavior - let it continue
+                if (_enemyShipBehaviors[enemyShip] != FriendlyShipBehavior.Aggressive && _enemyShipBehaviors[enemyShip] != FriendlyShipBehavior.Flee)
+                {
+                    _enemyShipBehaviors[enemyShip] = FriendlyShipBehavior.Aggressive;
+                    _enemyShipBehaviorTimer[enemyShip] = float.MaxValue; // Aggressive is permanent until player leaves range
+                }
+            }
+            else
+            {
+                // Player not detected - use normal behaviors with timers
+                // If currently aggressive (and not fleeing), switch back to random behavior
+                if (_enemyShipBehaviors[enemyShip] == FriendlyShipBehavior.Aggressive)
+                {
+                    FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                    while (newBehavior == FriendlyShipBehavior.Flee)
+                    {
+                        newBehavior = GetRandomBehavior();
+                    }
+                    _enemyShipBehaviors[enemyShip] = newBehavior;
+                    _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(newBehavior);
+                }
+                
+                // Decrement behavior timer for non-aggressive behaviors
+                if (_enemyShipBehaviorTimer.ContainsKey(enemyShip) && _enemyShipBehaviors[enemyShip] != FriendlyShipBehavior.Aggressive)
+                {
+                    FriendlyShipBehavior enemyCurrentBehavior = _enemyShipBehaviors[enemyShip];
+                    
+                    // Only decrement timer if not fleeing (flee timer is managed separately)
+                    if (enemyCurrentBehavior != FriendlyShipBehavior.Flee)
+                    {
+                        _enemyShipBehaviorTimer[enemyShip] -= deltaTime;
+                    }
+                    else
+                    {
+                        // For flee behavior, check if fully healed - if so, resume normal behavior immediately
+                        if (enemyShip.Health >= enemyShip.MaxHealth)
+                        {
+                            // Fully healed, switch back to random behavior immediately
+                            FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                            while (newBehavior == FriendlyShipBehavior.Flee)
+                            {
+                                newBehavior = GetRandomBehavior();
+                            }
+                            _enemyShipBehaviors[enemyShip] = newBehavior;
+                            _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(newBehavior);
+                            enemyShip.IsFleeing = false; // No longer fleeing, stop damage effect
+                            
+                            // Face the direction the ship is moving when resuming behavior
+                            if (enemyShip.Velocity.LengthSquared() > 1f)
+                            {
+                                float targetRotation = (float)System.Math.Atan2(enemyShip.Velocity.Y, enemyShip.Velocity.X) + MathHelper.PiOver2;
+                                enemyShip.Rotation = targetRotation;
+                            }
+                            
+                            if (newBehavior == FriendlyShipBehavior.Idle)
+                            {
+                                enemyShip.StopMoving();
+                                enemyShip.IsIdle = true;
+                            }
+                            else
+                            {
+                                enemyShip.IsIdle = false;
+                            }
+                            
+                            System.Console.WriteLine($"[ENEMY] Fully healed! Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
+                        }
+                        else
+                        {
+                            // Still damaged, continue fleeing and update timer
+                            _enemyShipBehaviorTimer[enemyShip] -= deltaTime;
+                        }
+                    }
+                    
+                    // Check if behavior should transition
+                    if (_enemyShipBehaviorTimer[enemyShip] <= 0f)
+                    {
+                        // If currently fleeing, check if fully healed - if so, resume normal behavior immediately
+                        if (enemyCurrentBehavior == FriendlyShipBehavior.Flee)
+                        {
+                            // If fully healed, switch back to random behavior immediately
+                            if (enemyShip.Health >= enemyShip.MaxHealth)
+                            {
+                                FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                                while (newBehavior == FriendlyShipBehavior.Flee)
+                                {
+                                    newBehavior = GetRandomBehavior();
+                                }
+                                _enemyShipBehaviors[enemyShip] = newBehavior;
+                                _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(newBehavior);
+                                enemyShip.IsFleeing = false; // No longer fleeing, stop damage effect
+                                
+                                // Face the direction the ship is moving when resuming behavior
+                                if (enemyShip.Velocity.LengthSquared() > 1f)
+                                {
+                                    float targetRotation = (float)System.Math.Atan2(enemyShip.Velocity.Y, enemyShip.Velocity.X) + MathHelper.PiOver2;
+                                    enemyShip.Rotation = targetRotation;
+                                }
+                                
+                                if (newBehavior == FriendlyShipBehavior.Idle)
+                                {
+                                    enemyShip.StopMoving();
+                                    enemyShip.IsIdle = true;
+                                }
+                                else
+                                {
+                                    enemyShip.IsIdle = false;
+                                }
+                                
+                                System.Console.WriteLine($"[ENEMY] Fully healed! Health: {enemyShip.Health:F1}/{enemyShip.MaxHealth:F1} - Resuming normal behavior: {newBehavior}");
+                            }
+                            else
+                            {
+                                // Still damaged, continue fleeing - reset timer
+                                _enemyShipBehaviorTimer[enemyShip] = 10.0f; // Continue fleeing
+                                enemyShip.IsFleeing = true; // Keep damage effect active
+                            }
+                        }
+                        else
+                        {
+                            // Transition to new behavior (but not Flee - that's only triggered by low health)
+                            FriendlyShipBehavior newBehavior = GetRandomBehavior();
+                            while (newBehavior == FriendlyShipBehavior.Flee)
+                            {
+                                newBehavior = GetRandomBehavior();
+                            }
+                            _enemyShipBehaviors[enemyShip] = newBehavior;
+                            _enemyShipBehaviorTimer[enemyShip] = GetBehaviorDuration(newBehavior);
+                            
+                            if (newBehavior == FriendlyShipBehavior.Idle)
+                            {
+                                enemyShip.StopMoving();
+                                enemyShip.IsIdle = true;
+                            }
+                            else
+                            {
+                                enemyShip.IsIdle = false;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Update attack cooldown
+            if (_enemyShipAttackCooldown[enemyShip] > 0f)
+            {
+                _enemyShipAttackCooldown[enemyShip] -= deltaTime;
+            }
+            
+            // Execute current behavior
+            FriendlyShipBehavior currentBehavior = _enemyShipBehaviors[enemyShip];
+            
+            if (currentBehavior == FriendlyShipBehavior.Aggressive)
+            {
+                // Execute aggressive behavior
+                ExecuteAggressiveBehavior(enemyShip, deltaTime);
+            }
+            else
+            {
+                // Execute normal behaviors (same as friendly ships)
+                // Only execute behavior if ship is not actively moving (reached target) or if behavior requires immediate action
+                if (!enemyShip.IsActivelyMoving() || currentBehavior == FriendlyShipBehavior.LongDistance || currentBehavior == FriendlyShipBehavior.Idle || currentBehavior == FriendlyShipBehavior.Flee)
+                {
+                    switch (currentBehavior)
+                    {
+                        case FriendlyShipBehavior.Idle:
+                            ExecuteIdleBehavior((FriendlyShip)enemyShip);
+                            break;
+                        case FriendlyShipBehavior.Patrol:
+                            ExecutePatrolBehavior((FriendlyShip)enemyShip);
+                            break;
+                        case FriendlyShipBehavior.LongDistance:
+                            ExecuteLongDistanceBehavior((FriendlyShip)enemyShip);
+                            break;
+                        case FriendlyShipBehavior.Wander:
+                            ExecuteWanderBehavior((FriendlyShip)enemyShip);
+                            break;
+                        case FriendlyShipBehavior.Flee:
+                            enemyShip.IsFleeing = true; // Ensure flee flag is set while executing flee behavior
+                            ExecuteFleeBehavior((FriendlyShip)enemyShip);
+                            break;
+                    }
+                }
+            }
+        }
+        
+        private void ExecuteAggressiveBehavior(EnemyShip enemyShip, float deltaTime)
+        {
+            if (_playerShip == null) return;
+            
+            // Calculate distance to player
+            Vector2 toPlayer = _playerShip.Position - enemyShip.Position;
+            float distanceToPlayer = toPlayer.Length();
+            
+            // Attack range: if within range, attack the player
+            const float attackRange = 800f; // Range at which enemy will attack
+            const float attackCooldownTime = 1.5f; // Time between attacks (seconds)
+            const float pursuitRange = 2000f; // Range at which enemy will pursue player
+            
+            if (distanceToPlayer < pursuitRange && distanceToPlayer > 0.1f)
+            {
+                toPlayer.Normalize();
+                Vector2 targetPosition = _playerShip.Position;
+                
+                // Calculate safe distances
+                float playerAvoidanceRadius = _playerShip.AvoidanceDetectionRange;
+                float enemyAvoidanceRadius = enemyShip.AvoidanceDetectionRange;
+                float effectiveAvoidanceRadius = Math.Max(playerAvoidanceRadius, enemyAvoidanceRadius);
+                const float preferredAttackDistance = 600f; // Preferred distance for attacking (outside avoidance radius but close enough to attack)
+                float tooCloseDistance = effectiveAvoidanceRadius * 1.5f; // If closer than this, fly away
+                float minAttackDistance = effectiveAvoidanceRadius * 1.2f; // Minimum safe distance
+                
+                if (distanceToPlayer < tooCloseDistance)
+                {
+                    // Too close - fly away from player
+                    float backAwayDistance = (tooCloseDistance - distanceToPlayer) * 2f; // Back away 2x the overlap
+                    targetPosition = enemyShip.Position - toPlayer * backAwayDistance;
+                    
+                    // Ensure we back away to at least the preferred attack distance
+                    Vector2 awayDirection = -toPlayer;
+                    float distanceToPreferred = preferredAttackDistance - distanceToPlayer;
+                    if (distanceToPreferred > 0)
+                    {
+                        targetPosition = enemyShip.Position + awayDirection * distanceToPreferred;
+                    }
+                }
+                else if (distanceToPlayer > preferredAttackDistance)
+                {
+                    // Too far - move closer to preferred attack distance
+                    Vector2 directionToPlayer = toPlayer;
+                    float approachDistance = distanceToPlayer - preferredAttackDistance;
+                    targetPosition = enemyShip.Position + directionToPlayer * Math.Min(approachDistance, 500f); // Approach gradually
+                }
+                else
+                {
+                    // At good distance - maintain position relative to player (orbit or strafe)
+                    // Try to maintain preferred attack distance while staying mobile
+                    Vector2 perpendicular = new Vector2(-toPlayer.Y, toPlayer.X); // Perpendicular direction
+                    perpendicular.Normalize();
+                    // Add some perpendicular movement to make enemies strafe around player
+                    targetPosition = _playerShip.Position - toPlayer * preferredAttackDistance + perpendicular * 200f;
+                }
+                
+                enemyShip.SetTargetPosition(targetPosition);
+                enemyShip.IsIdle = false; // Ensure ship is not idle
+                
+                // Always face the player when in aggressive mode
+                enemyShip.SetAimTarget(_playerShip.Position);
+                
+                // Attack if within range and cooldown is ready
+                if (distanceToPlayer < attackRange && _enemyShipAttackCooldown[enemyShip] <= 0f)
+                {
+                    // Fire laser at player
+                    FireEnemyLaser(enemyShip);
+                    _enemyShipAttackCooldown[enemyShip] = attackCooldownTime;
+                }
+            }
+            else
+            {
+                // Player out of range - clear aim target so ship can rotate normally
+                enemyShip.SetAimTarget(null);
+            }
+        }
+        
+        private void FireEnemyLaser(EnemyShip enemyShip)
+        {
+            if (enemyShip == null) return;
+            
+            var shipTexture = enemyShip.GetTexture();
+            if (shipTexture == null) return;
+            
+            float textureCenterX = shipTexture.Width / 2f;
+            float textureCenterY = shipTexture.Height / 2f;
+            float shipRotation = enemyShip.Rotation;
+            float cos = (float)Math.Cos(shipRotation);
+            float sin = (float)Math.Sin(shipRotation);
+            
+            // Fire laser from center of ship (front)
+            float spriteX = textureCenterX;
+            float spriteY = 20f; // Near the front of the ship
+            
+            // Convert sprite coordinates to offset from ship center
+            float offsetX = spriteX - textureCenterX;
+            float offsetY = spriteY - textureCenterY;
+            
+            // Rotate the offset by ship's rotation to get world-space offset
+            float rotatedX = offsetX * cos - offsetY * sin;
+            float rotatedY = offsetX * sin + offsetY * cos;
+            
+            // Calculate laser spawn position
+            Vector2 laserSpawnPosition = enemyShip.Position + new Vector2(rotatedX, rotatedY);
+            
+            var laser = new Laser(laserSpawnPosition, shipRotation, GraphicsDevice, enemyShip.Damage, enemyShip);
+            _lasers.Add(laser);
+            
+            // Play laser fire sound effect with SFX volume
+            _laserFireSound?.Play(_sfxVolume, 0f, 0f);
         }
         
         private void ExecuteIdleBehavior(FriendlyShip friendlyShip)
@@ -3739,6 +4847,100 @@ namespace Planet9.Scenes
                     _friendlyShipCurrentWaypointIndex.Remove(friendlyShip);
                 }
                 friendlyShip.SetTargetPosition(targetPos);
+            }
+        }
+        
+        private void ExecuteFleeBehavior(FriendlyShip friendlyShip)
+        {
+            // Flee: Ship continuously tries to escape from nearest threat (player or enemy)
+            Vector2? nearestThreatPos = null;
+            float nearestThreatDistance = float.MaxValue;
+            
+            // Check player as threat
+            if (_playerShip != null && _playerShip.IsActive)
+            {
+                float distanceToPlayer = Vector2.Distance(friendlyShip.Position, _playerShip.Position);
+                if (distanceToPlayer < nearestThreatDistance)
+                {
+                    nearestThreatDistance = distanceToPlayer;
+                    nearestThreatPos = _playerShip.Position;
+                }
+            }
+            
+            // Check enemy ships as threats (for friendly ships)
+            if (friendlyShip is not EnemyShip)
+            {
+                foreach (var enemyShip in _enemyShips)
+                {
+                    if (!enemyShip.IsActive) continue;
+                    float distanceToEnemy = Vector2.Distance(friendlyShip.Position, enemyShip.Position);
+                    if (distanceToEnemy < nearestThreatDistance)
+                    {
+                        nearestThreatDistance = distanceToEnemy;
+                        nearestThreatPos = enemyShip.Position;
+                    }
+                }
+            }
+            
+            // If no threat found, stop fleeing
+            if (!nearestThreatPos.HasValue) return;
+            
+            // Calculate direction away from nearest threat
+            Vector2 awayFromThreat = friendlyShip.Position - nearestThreatPos.Value;
+            float distanceToThreat = awayFromThreat.Length();
+            
+            if (distanceToThreat > 0.1f)
+            {
+                awayFromThreat.Normalize();
+                
+                // Set aim target in the flee direction so ship immediately turns away from threat
+                // This makes the ship turn to face the direction it's fleeing (like enemy ships do)
+                Vector2 fleeAimTarget = friendlyShip.Position + awayFromThreat * 1000f; // Aim point far in flee direction
+                friendlyShip.SetAimTarget(fleeAimTarget);
+                
+                // Continuously update flee target to keep moving away
+                // Use a shorter, more dynamic flee distance that gets updated frequently to prevent getting stuck
+                // Start with a closer target and extend it as the ship moves away
+                float currentDistanceToThreat = Vector2.Distance(friendlyShip.Position, nearestThreatPos.Value);
+                float fleeDistance = Math.Max(1500f, currentDistanceToThreat + 1000f); // At least 1500 away, or current distance + 1000
+                Vector2 fleeTarget = friendlyShip.Position + awayFromThreat * fleeDistance;
+                
+                // Clamp to map bounds
+                const float margin = 200f;
+                fleeTarget = new Vector2(
+                    MathHelper.Clamp(fleeTarget.X, margin, MapSize - margin),
+                    MathHelper.Clamp(fleeTarget.Y, margin, MapSize - margin)
+                );
+                
+                // Avoid other ships' radius when setting flee target
+                if (IsTooCloseToOtherShips(fleeTarget, friendlyShip))
+                {
+                    fleeTarget = AvoidOtherShipsPosition(fleeTarget, friendlyShip);
+                    fleeTarget = new Vector2(
+                        MathHelper.Clamp(fleeTarget.X, margin, MapSize - margin),
+                        MathHelper.Clamp(fleeTarget.Y, margin, MapSize - margin)
+                    );
+                }
+                
+                // Clear A* pathfinding when fleeing to prevent getting stuck
+                // Fleeing ships should use direct movement, not pathfinding
+                if (_friendlyShipAStarPaths.ContainsKey(friendlyShip))
+                {
+                    _friendlyShipAStarPaths.Remove(friendlyShip);
+                }
+                if (_friendlyShipOriginalDestination.ContainsKey(friendlyShip))
+                {
+                    _friendlyShipOriginalDestination.Remove(friendlyShip);
+                }
+                if (_friendlyShipCurrentWaypointIndex.ContainsKey(friendlyShip))
+                {
+                    _friendlyShipCurrentWaypointIndex.Remove(friendlyShip);
+                }
+                
+                // Always update target position to keep fleeing (even if already moving)
+                // This ensures the ship continuously moves away from the threat
+                friendlyShip.SetTargetPosition(fleeTarget);
+                friendlyShip.IsIdle = false; // Ensure ship is moving
             }
         }
         
@@ -4048,8 +5250,24 @@ namespace Planet9.Scenes
                 // Draw ship (includes engine trail)
                 friendlyShip.Draw(spriteBatch);
             }
-
+            
+            // Draw enemy ships
+            foreach (var enemyShip in _enemyShips)
+            {
+                // Draw ship (includes engine trail)
+                enemyShip.Draw(spriteBatch);
+            }
+            
+            // Draw active explosions (explosions that continue after ships are destroyed)
+            foreach (var explosion in _activeExplosions)
+            {
+                explosion.Draw(spriteBatch);
+            }
+            
             spriteBatch.End();
+            
+            // Draw health bars in screen space (after world-space batch ends)
+            DrawHealthBars(spriteBatch, transform);
             
             // Draw behavior labels in screen space (after world-space batch ends)
             if (_font != null && _behaviorTextVisible)
@@ -4085,10 +5303,40 @@ namespace Planet9.Scenes
                     }
                 }
                 
-                // Debug output (only print occasionally to avoid spam)
-                if (behaviorLabelsDrawn > 0 && System.Environment.TickCount % 3000 < 16) // Print roughly every 3 seconds
+                // Draw enemy ship behavior labels
+                int enemyBehaviorLabelsDrawn = 0;
+                foreach (var enemyShip in _enemyShips)
                 {
-                    System.Console.WriteLine($"[BEHAVIOR TEXT] Drawing {behaviorLabelsDrawn} behavior labels, Visible: {_behaviorTextVisible}, Font: {_font != null}");
+                    if (_enemyShipBehaviors.ContainsKey(enemyShip))
+                    {
+                        FriendlyShipBehavior behavior = _enemyShipBehaviors[enemyShip];
+                        string behaviorText = behavior.ToString();
+                        enemyBehaviorLabelsDrawn++;
+                        
+                        // Calculate text position (below the ship in world space)
+                        Vector2 shipPosition = enemyShip.Position;
+                        Texture2D? enemyShipTexture = enemyShip.GetTexture();
+                        float offsetY = (enemyShipTexture?.Height ?? 128) / 2f + 20f; // Half ship height + padding
+                        Vector2 textWorldPosition = shipPosition + new Vector2(0, offsetY);
+                        
+                        // Transform world position to screen position
+                        Vector2 screenPosition = Vector2.Transform(textWorldPosition, transform);
+                        
+                        // Measure text to center it (account for scale)
+                        float fontScale = 0.7f; // Make font smaller
+                        Vector2 textSize = _font.MeasureString(behaviorText) * fontScale;
+                        Vector2 centeredPosition = screenPosition - new Vector2(textSize.X / 2, 0);
+                        
+                        // Draw text with a shadow for better visibility (red for enemy ships)
+                        spriteBatch.DrawString(_font, behaviorText, centeredPosition + new Vector2(1, 1), Color.Black, 0f, Vector2.Zero, fontScale, SpriteEffects.None, 0f);
+                        spriteBatch.DrawString(_font, behaviorText, centeredPosition, Color.Red, 0f, Vector2.Zero, fontScale, SpriteEffects.None, 0f);
+                    }
+                }
+                
+                // Debug output (only print occasionally to avoid spam)
+                if ((behaviorLabelsDrawn > 0 || enemyBehaviorLabelsDrawn > 0) && System.Environment.TickCount % 3000 < 16) // Print roughly every 3 seconds
+                {
+                    System.Console.WriteLine($"[BEHAVIOR TEXT] Drawing {behaviorLabelsDrawn} friendly + {enemyBehaviorLabelsDrawn} enemy behavior labels, Visible: {_behaviorTextVisible}, Font: {_font != null}");
                 }
                 
                 spriteBatch.End();
@@ -4235,8 +5483,8 @@ namespace Planet9.Scenes
         {
             if (_previewShipLabel == null) return;
             
-            string className = _previewShipIndex == 0 ? "PlayerShip" : "FriendlyShip";
-            _previewShipLabel.Text = $"{className} ({_previewShipIndex + 1}/2)";
+            string className = _previewShipIndex == 0 ? "PlayerShip" : (_previewShipIndex == 1 ? "FriendlyShip" : "EnemyShip");
+            _previewShipLabel.Text = $"{className} ({_previewShipIndex + 1}/3)";
         }
         
         private void SwitchShipClass(int classIndex)
@@ -4254,10 +5502,17 @@ namespace Planet9.Scenes
             if (classIndex == 0)
             {
                 _playerShip = new PlayerShip(GraphicsDevice, Content);
+            _playerShip.Health = 100f; // Player has 100 health
+            _playerShip.MaxHealth = 100f;
+            _playerShip.Damage = 10f; // Player does 10 damage
             }
-            else
+            else if (classIndex == 1)
             {
                 _playerShip = new FriendlyShip(GraphicsDevice, Content);
+            }
+            else // classIndex == 2
+            {
+                _playerShip = new EnemyShip(GraphicsDevice, Content);
             }
             _playerShip.Position = mapCenter;
             
@@ -4276,15 +5531,15 @@ namespace Planet9.Scenes
         {
             if (_playerShip == null) return;
             
-            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip";
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : (_currentShipClassIndex == 1 ? "FriendlyShip" : "EnemyShip");
             var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
             
             try
             {
-                // Only include ShipIdleRate for FriendlyShip, not PlayerShip
-                if (_currentShipClassIndex == 0)
+                // Only include ShipIdleRate for FriendlyShip, not PlayerShip or EnemyShip
+                if (_currentShipClassIndex == 0 || _currentShipClassIndex == 2)
                 {
-                    // PlayerShip settings (no ShipIdleRate)
+                    // PlayerShip or EnemyShip settings (no ShipIdleRate)
                     var settings = new
                     {
                         ShipSpeed = _playerShip.MoveSpeed,
@@ -4300,7 +5555,7 @@ namespace Planet9.Scenes
                     File.WriteAllText(filePath, json);
                     System.Console.WriteLine($"Saved {className} settings to: {filePath}");
                 }
-                else
+                else // _currentShipClassIndex == 1
                 {
                     // FriendlyShip settings (includes ShipIdleRate)
                     var settings = new
@@ -4330,7 +5585,7 @@ namespace Planet9.Scenes
         {
             if (_playerShip == null) return;
             
-            string className = _currentShipClassIndex == 0 ? "PlayerShip" : "FriendlyShip";
+            string className = _currentShipClassIndex == 0 ? "PlayerShip" : (_currentShipClassIndex == 1 ? "FriendlyShip" : "EnemyShip");
             var filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"settings_{className}.json");
             
             try
@@ -4411,6 +5666,14 @@ namespace Planet9.Scenes
                                 friendlyShip.AvoidanceDetectionRange = _avoidanceDetectionRange;
                             }
                         }
+                        else if (_currentShipClassIndex == 2)
+                        {
+                            // EnemyShip class - update all enemy ships
+                            foreach (var enemyShip in _enemyShips)
+                            {
+                                enemyShip.AvoidanceDetectionRange = _avoidanceDetectionRange;
+                            }
+                        }
                         else if (_playerShip != null)
                         {
                             // PlayerShip class - update player ship
@@ -4431,16 +5694,26 @@ namespace Planet9.Scenes
                     if (settings.TryGetProperty("LookAheadDistance", out var lookAheadDistanceElement))
                     {
                         var lookAheadDistance = lookAheadDistanceElement.GetSingle();
-                        _playerShip.LookAheadDistance = MathHelper.Clamp(lookAheadDistance, 0.5f, 5.0f);
-                        if (_lookAheadSlider != null) _lookAheadSlider.Value = _playerShip.LookAheadDistance;
-                        if (_lookAheadLabel != null) _lookAheadLabel.Text = $"Look-Ahead Distance: {_playerShip.LookAheadDistance:F2}x";
-                        
-                        // If loading FriendlyShip settings, also update all friendly ships
-                        if (_currentShipClassIndex == 1)
+                        if (_playerShip != null)
                         {
-                            foreach (var friendlyShip in _friendlyShips)
+                            _playerShip.LookAheadDistance = MathHelper.Clamp(lookAheadDistance, 0.5f, 5.0f);
+                            if (_lookAheadSlider != null) _lookAheadSlider.Value = _playerShip.LookAheadDistance;
+                            if (_lookAheadLabel != null) _lookAheadLabel.Text = $"Look-Ahead Distance: {_playerShip.LookAheadDistance:F2}x";
+                            
+                            // If loading FriendlyShip or EnemyShip settings, also update all ships of that class
+                            if (_currentShipClassIndex == 1)
                             {
-                                friendlyShip.LookAheadDistance = _playerShip.LookAheadDistance;
+                                foreach (var friendlyShip in _friendlyShips)
+                                {
+                                    friendlyShip.LookAheadDistance = _playerShip.LookAheadDistance;
+                                }
+                            }
+                            else if (_currentShipClassIndex == 2)
+                            {
+                                foreach (var enemyShip in _enemyShips)
+                                {
+                                    enemyShip.LookAheadDistance = _playerShip.LookAheadDistance;
+                                }
                             }
                         }
                     }
@@ -4449,13 +5722,26 @@ namespace Planet9.Scenes
                     if (settings.TryGetProperty("LookAheadVisible", out var lookAheadVisibleElement))
                     {
                         var lookAheadVisible = lookAheadVisibleElement.GetBoolean();
-                        _playerShip.LookAheadVisible = lookAheadVisible;
+                        if (_playerShip != null)
+                        {
+                            _playerShip.LookAheadVisible = lookAheadVisible;
+                        }
                         if (_lookAheadVisibleCheckBox != null) _lookAheadVisibleCheckBox.IsChecked = lookAheadVisible;
                         
-                        // Always update all friendly ships with the checkbox state
-                        foreach (var friendlyShip in _friendlyShips)
+                        // Update all ships of the current class with the checkbox state
+                        if (_currentShipClassIndex == 1)
                         {
-                            friendlyShip.LookAheadVisible = lookAheadVisible;
+                            foreach (var friendlyShip in _friendlyShips)
+                            {
+                                friendlyShip.LookAheadVisible = lookAheadVisible;
+                            }
+                        }
+                        else if (_currentShipClassIndex == 2)
+                        {
+                            foreach (var enemyShip in _enemyShips)
+                            {
+                                enemyShip.LookAheadVisible = lookAheadVisible;
+                            }
                         }
                     }
                     
@@ -4643,7 +5929,7 @@ namespace Planet9.Scenes
         
         private void DrawMinimap(SpriteBatch spriteBatch)
         {
-            if (_minimapBackgroundTexture == null || _minimapPlayerDotTexture == null || _minimapFriendlyDotTexture == null || _minimapViewportOutlineTexture == null)
+            if (_minimapBackgroundTexture == null || _minimapPlayerDotTexture == null || _minimapFriendlyDotTexture == null || _minimapEnemyDotTexture == null || _minimapViewportOutlineTexture == null)
                 return;
                 
             int minimapX = GraphicsDevice.Viewport.Width - MinimapSize - 10;
@@ -4700,6 +5986,69 @@ namespace Planet9.Scenes
                     SpriteEffects.None,
                     0f
                 );
+            }
+            
+            // Draw enemy ships on minimap
+            int enemyShipsDrawn = 0;
+            foreach (var enemyShip in _enemyShips)
+            {
+                var enemyScreenPos = WorldToMinimap(enemyShip.Position);
+                var enemyDotSize = 4f; // Same size as player dot for better visibility
+                
+                // Clamp enemy position to minimap bounds
+                enemyScreenPos.X = MathHelper.Clamp(enemyScreenPos.X, minimapX, minimapX + MinimapSize);
+                enemyScreenPos.Y = MathHelper.Clamp(enemyScreenPos.Y, minimapY, minimapY + MinimapSize);
+                
+                // Use bright red for enemy ships
+                Color enemyColor = new Color(255, 0, 0, 255); // Bright red, fully opaque
+                
+                spriteBatch.Draw(
+                    _minimapEnemyDotTexture, // Use dedicated red texture for enemy ships
+                    enemyScreenPos,
+                    null,
+                    Color.White, // Use white so the red texture color shows through
+                    0f,
+                    Vector2.Zero,
+                    enemyDotSize,
+                    SpriteEffects.None,
+                    0f
+                );
+                enemyShipsDrawn++;
+            }
+            
+            // Debug output (only print occasionally to avoid spam)
+            if (System.Environment.TickCount % 3000 < 16) // Print roughly every 3 seconds
+            {
+                System.Console.WriteLine($"[MINIMAP] Total enemy ships: {_enemyShips.Count}, Drawing: {enemyShipsDrawn} enemy ships (red dots)");
+                if (_enemyShips.Count > 0)
+                {
+                    foreach (var enemyShip in _enemyShips)
+                    {
+                        var worldPos = enemyShip.Position;
+                        var minimapPos = WorldToMinimap(worldPos);
+                        System.Console.WriteLine($"  Enemy at world ({worldPos.X:F0}, {worldPos.Y:F0}) -> minimap ({minimapPos.X:F0}, {minimapPos.Y:F0})");
+                    }
+                }
+                
+                // Also write to a log file for easier debugging
+                try
+                {
+                    var logPath = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "minimap_debug.log");
+                    using (var writer = new System.IO.StreamWriter(logPath, append: true))
+                    {
+                        writer.WriteLine($"[{System.DateTime.Now:HH:mm:ss}] MINIMAP: Total enemy ships: {_enemyShips.Count}, Drawing: {enemyShipsDrawn}");
+                        if (_enemyShips.Count > 0)
+                        {
+                            foreach (var enemyShip in _enemyShips)
+                            {
+                                var worldPos = enemyShip.Position;
+                                var minimapPos = WorldToMinimap(worldPos);
+                                writer.WriteLine($"  Enemy at world ({worldPos.X:F0}, {worldPos.Y:F0}) -> minimap ({minimapPos.X:F0}, {minimapPos.Y:F0})");
+                            }
+                        }
+                    }
+                }
+                catch { /* Ignore log file errors */ }
             }
             
             // Draw player ship position on minimap
@@ -5028,6 +6377,51 @@ namespace Planet9.Scenes
                     }
                 }
             }
+            
+            // Draw look-ahead lines for enemy ships (if enabled)
+            foreach (var enemyShip in _enemyShips)
+            {
+                if (enemyShip.LookAheadVisible)
+                {
+                    Vector2 shipPos = enemyShip.Position;
+                    
+                    // Calculate look-ahead target in the direction the ship is facing
+                    float shipRotation = enemyShip.Rotation;
+                    
+                    // Convert rotation to direction vector (ship points up at rotation 0)
+                    Vector2 direction = new Vector2(
+                        (float)System.Math.Sin(shipRotation),  // X component
+                        -(float)System.Math.Cos(shipRotation) // Y component (negative because up is negative Y in screen space)
+                    );
+                    
+                    float lookAheadDist = enemyShip.MoveSpeed * enemyShip.LookAheadDistance;
+                    Vector2 lookAheadTarget = shipPos + direction * lookAheadDist;
+                    
+                    // Draw line from ship to look-ahead target
+                    Vector2 lineDir = lookAheadTarget - shipPos;
+                    float lineLength = lineDir.Length();
+                    if (lineLength > 0.1f)
+                    {
+                        float rotation = (float)System.Math.Atan2(lineDir.Y, lineDir.X);
+                        Color lineColor = new Color(255, 0, 0, 255); // Red for enemy look-ahead line
+                        
+                        spriteBatch.Draw(
+                            _gridPixelTexture,
+                            shipPos,
+                            null,
+                            lineColor,
+                            rotation,
+                            new Vector2(0, 0.5f),
+                            new Vector2(lineLength, 3f), // 3 pixel thick line for better visibility
+                            SpriteEffects.None,
+                            0f
+                        );
+                        
+                        // Draw a small circle at the look-ahead target
+                        DrawCircle(spriteBatch, lookAheadTarget, 6f, new Color(255, 0, 0, 255)); // Red circle for enemy ships
+                    }
+                }
+            }
         }
         
         private void DrawCircle(SpriteBatch spriteBatch, Vector2 center, float radius, Color color)
@@ -5069,6 +6463,129 @@ namespace Planet9.Scenes
                     );
                 }
             }
+        }
+        
+        private void DrawHealthBars(SpriteBatch spriteBatch, Matrix transform)
+        {
+            // Create pixel texture if it doesn't exist
+            if (_pixelTexture == null)
+            {
+                _pixelTexture = new Texture2D(GraphicsDevice, 1, 1);
+                _pixelTexture.SetData(new[] { Color.White });
+            }
+            
+            // Start a new sprite batch for screen-space drawing
+            spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend);
+            
+            // Draw health bar for player ship
+            if (_playerShip != null && _playerShip.IsActive)
+            {
+                DrawHealthBarForShip(spriteBatch, transform, _playerShip, Color.Green);
+            }
+            
+            // Draw health bars for friendly ships
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                if (friendlyShip.IsActive)
+                {
+                    DrawHealthBarForShip(spriteBatch, transform, friendlyShip, Color.Cyan);
+                }
+            }
+            
+            // Draw health bars for enemy ships
+            foreach (var enemyShip in _enemyShips)
+            {
+                if (enemyShip.IsActive)
+                {
+                    DrawHealthBarForShip(spriteBatch, transform, enemyShip, Color.Red);
+                }
+            }
+            
+            spriteBatch.End();
+        }
+        
+        private void DrawHealthBarForShip(SpriteBatch spriteBatch, Matrix transform, PlayerShip ship, Color barColor)
+        {
+            if (ship.MaxHealth <= 0f) return; // Avoid division by zero
+            if (_pixelTexture == null) return;
+            
+            // Calculate health percentage
+            float healthPercent = MathHelper.Clamp(ship.Health / ship.MaxHealth, 0f, 1f);
+            
+            // Health bar dimensions (in screen space pixels)
+            const float barWidth = 60f;
+            const float barHeight = 6f;
+            const float barOffsetY = -180f; // Position above ship (negative Y = up, increased to move bars higher)
+            
+            // Calculate bar position in world space (above ship)
+            Vector2 barWorldPosition = ship.Position + new Vector2(0, barOffsetY);
+            
+            // Transform world position to screen position
+            Vector2 barScreenPosition = Vector2.Transform(barWorldPosition, transform);
+            
+            // Draw background (dark gray) - draw in screen space
+            Color backgroundColor = new Color(50, 50, 50, 200); // Dark gray with transparency
+            spriteBatch.Draw(
+                _pixelTexture,
+                new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2), (int)barScreenPosition.Y - (int)(barHeight / 2),
+                    (int)barWidth, (int)barHeight),
+                backgroundColor
+            );
+            
+            // Draw health bar (colored based on health percentage)
+            Color healthColor = barColor;
+            if (healthPercent < 0.3f) // Low health - red tint
+            {
+                healthColor = Color.Red;
+            }
+            else if (healthPercent < 0.6f) // Medium health - yellow tint
+            {
+                healthColor = Color.Orange;
+            }
+            
+            float healthBarWidth = barWidth * healthPercent;
+            if (healthBarWidth > 0f)
+            {
+                spriteBatch.Draw(
+                    _pixelTexture,
+                    new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2), (int)barScreenPosition.Y - (int)(barHeight / 2),
+                        (int)healthBarWidth, (int)barHeight),
+                    healthColor
+                );
+            }
+            
+            // Draw border (1 pixel thick lines in screen space)
+            Color borderColor = new Color(200, 200, 200, 255); // Light gray border
+            const int borderThickness = 1;
+            
+            // Top border
+            spriteBatch.Draw(
+                _pixelTexture,
+                new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2), (int)barScreenPosition.Y - (int)(barHeight / 2) - borderThickness,
+                    (int)barWidth, borderThickness),
+                borderColor
+            );
+            // Bottom border
+            spriteBatch.Draw(
+                _pixelTexture,
+                new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2), (int)barScreenPosition.Y - (int)(barHeight / 2) + (int)barHeight,
+                    (int)barWidth, borderThickness),
+                borderColor
+            );
+            // Left border
+            spriteBatch.Draw(
+                _pixelTexture,
+                new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2) - borderThickness, (int)barScreenPosition.Y - (int)(barHeight / 2),
+                    borderThickness, (int)barHeight),
+                borderColor
+            );
+            // Right border
+            spriteBatch.Draw(
+                _pixelTexture,
+                new Rectangle((int)barScreenPosition.X - (int)(barWidth / 2) + (int)barWidth, (int)barScreenPosition.Y - (int)(barHeight / 2),
+                    borderThickness, (int)barHeight),
+                borderColor
+            );
         }
     }
     

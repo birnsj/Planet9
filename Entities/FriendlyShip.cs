@@ -41,6 +41,20 @@ namespace Planet9.Entities
                 _engineTrail.Update(deltaTime, Position, Rotation, currentSpeed, _texture.Width, _texture.Height);
             }
             
+            // Update damage effect (activate when ship is damaged and remain active while damaged)
+            if (_damageEffect != null)
+            {
+                // Activate damage effect when ship has taken damage (Health < MaxHealth)
+                // This will show particles when fleeing starts and keep them active while the ship is damaged
+                bool shouldShowDamage = Health < MaxHealth && Health > 0f;
+                _damageEffect.SetActive(shouldShowDamage);
+                
+                if (shouldShowDamage)
+                {
+                    _damageEffect.Update(deltaTime, Position, Rotation);
+                }
+            }
+            
             if (_isMoving)
             {
                 var direction = _targetPosition - Position;
@@ -60,9 +74,27 @@ namespace Planet9.Entities
                     // Update position
                     Position += _velocity * deltaTime;
                     
+                    // Check if we have an aim target (for enemy ships attacking player) - prioritize this over movement direction
+                    if (_aimTarget.HasValue)
+                    {
+                        // Prioritize aiming at target (e.g., player for enemy ships)
+                        var aimDirection = _aimTarget.Value - Position;
+                        if (aimDirection.LengthSquared() > 0.1f)
+                        {
+                            float targetRotation = (float)System.Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
+                            float angleDiff = targetRotation - Rotation;
+                            while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
+                            while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
+                            float rotationDelta = AimRotationSpeed * deltaTime * 3f; // Fast rotation to face target
+                            if (System.Math.Abs(angleDiff) < rotationDelta)
+                                Rotation = targetRotation;
+                            else
+                                Rotation += System.Math.Sign(angleDiff) * rotationDelta;
+                        }
+                    }
                     // Smoothly rotate to face the direction of movement (velocity direction) using shortest rotation path (unless in idle behavior)
                     // Always face the direction we're actually moving, not the target direction
-                    if (!IsIdle && _velocity.LengthSquared() > 1f) // Only rotate if we have significant velocity
+                    else if (!IsIdle && _velocity.LengthSquared() > 1f) // Only rotate if we have significant velocity
                     {
                         // Calculate rotation to face velocity direction (the direction we're actually moving)
                         float targetRotation = (float)System.Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;

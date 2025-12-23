@@ -20,10 +20,17 @@ namespace Planet9.Entities
         public float AvoidanceDetectionRange { get; set; } = 300f; // Avoidance detection range for this ship
         public float LookAheadDistance { get; set; } = 1.5f; // Look-ahead distance multiplier (multiplied by MoveSpeed for actual distance)
         public bool LookAheadVisible { get; set; } = false; // Whether to show debug line for look-ahead target
+        public float Health { get; set; } = 100f; // Ship health
+        public float MaxHealth { get; set; } = 100f; // Maximum health
+        public float HealthRegenRate { get; set; } = 20f; // Health per second
+        public float Damage { get; set; } = 10f; // Damage dealt by this ship's lasers
+        public bool IsFleeing { get; set; } = false; // Track if ship is currently fleeing
         protected bool _isMoving = false;
         protected Vector2 _velocity = Vector2.Zero; // Current velocity for inertia
         protected Vector2? _aimTarget = null; // Target position to aim at when not moving
         protected EngineTrail? _engineTrail;
+        protected DamageEffect? _damageEffect;
+        protected ExplosionEffect? _explosionEffect;
         protected System.Random _driftRandom = new System.Random(); // Random for drift direction
         protected float _driftDirection = 0f; // Current drift direction in radians
         protected float _driftDirectionChangeTimer = 0f; // Timer for changing drift direction
@@ -36,6 +43,8 @@ namespace Planet9.Entities
             _targetPosition = Position;
             LoadTexture();
             _engineTrail = new EngineTrail(_graphicsDevice);
+            _damageEffect = new DamageEffect(_graphicsDevice);
+            _explosionEffect = new ExplosionEffect(_graphicsDevice);
         }
         
         public Vector2 TargetPosition => _targetPosition; // Public property to access target position
@@ -140,6 +149,37 @@ namespace Planet9.Entities
                 _engineTrail.Update(deltaTime, Position, Rotation, currentSpeed, _texture.Width, _texture.Height);
             }
             
+            // Health regeneration (only if ship is alive, not at full health, and NOT fleeing)
+            if (Health > 0f && Health < MaxHealth && !IsFleeing)
+            {
+                Health += HealthRegenRate * deltaTime;
+                if (Health > MaxHealth)
+                {
+                    Health = MaxHealth; // Clamp to max health
+                }
+            }
+            
+            // Update damage effect (activate when ship is damaged and remain active while damaged)
+            if (_damageEffect != null)
+            {
+                // Activate damage effect when ship has taken damage (Health < MaxHealth)
+                // This will show particles when fleeing starts and keep them active while the ship is damaged
+                // When health regenerates to full, the damage effect will automatically stop
+                bool shouldShowDamage = Health < MaxHealth && Health > 0f;
+                _damageEffect.SetActive(shouldShowDamage);
+                
+                if (shouldShowDamage)
+                {
+                    _damageEffect.Update(deltaTime, Position, Rotation);
+                }
+            }
+            
+            // Update explosion effect (if ship just died, trigger explosion)
+            if (_explosionEffect != null && Health <= 0f && _explosionEffect.IsActive)
+            {
+                _explosionEffect.Update(deltaTime);
+            }
+            
             if (_isMoving)
             {
                 var direction = _targetPosition - Position;
@@ -169,8 +209,46 @@ namespace Planet9.Entities
                         Position += _velocity * deltaTime;
                     }
                     
-                    // Smoothly rotate to face the direction of movement using shortest rotation path
-                    if (direction.LengthSquared() > 0.1f) // Only rotate if there's a direction
+                    // Always rotate towards aim target when it's set (turn in place)
+                    // Rotation speed matches the angle - faster for smaller angles, slower for larger angles
+                    if (_aimTarget.HasValue)
+                    {
+                        var aimDirection = _aimTarget.Value - Position;
+                        if (aimDirection.LengthSquared() > 0.1f)
+                        {
+                            float targetRotation = (float)Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
+                            float angleDiff = targetRotation - Rotation;
+                            while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
+                            while (angleDiff < -MathHelper.Pi) angleDiff += MathHelper.TwoPi;
+                            
+                            // Calculate rotation speed based on angle - faster for smaller angles
+                            float absAngleDiff = Math.Abs(angleDiff);
+                            float angleSpeedMultiplier;
+                            if (absAngleDiff < MathHelper.PiOver4) // Less than 45 degrees
+                            {
+                                angleSpeedMultiplier = 1.0f; // Full speed
+                            }
+                            else if (absAngleDiff < MathHelper.PiOver2) // Less than 90 degrees
+                            {
+                                angleSpeedMultiplier = 0.75f; // 75% speed
+                            }
+                            else if (absAngleDiff < MathHelper.Pi * 0.75f) // Less than 135 degrees
+                            {
+                                angleSpeedMultiplier = 0.5f; // 50% speed
+                            }
+                            else // 135+ degrees (sharp turn)
+                            {
+                                angleSpeedMultiplier = 0.25f; // 25% speed for very sharp turns
+                            }
+                            
+                            float rotationDelta = AimRotationSpeed * deltaTime * angleSpeedMultiplier;
+                            if (Math.Abs(angleDiff) < rotationDelta)
+                                Rotation = targetRotation;
+                            else
+                                Rotation += Math.Sign(angleDiff) * rotationDelta;
+                        }
+                    }
+                    else if (direction.LengthSquared() > 0.1f) // Otherwise, rotate toward movement direction
                     {
                         // Calculate rotation to face target direction (not velocity, but desired direction)
                         float targetRotation = (float)Math.Atan2(direction.Y, direction.X) + MathHelper.PiOver2;
@@ -214,9 +292,67 @@ namespace Planet9.Entities
                 // Apply velocity
                 Position += _velocity * deltaTime;
                 
-                // Smoothly face velocity direction while coasting
-                if (_velocity.LengthSquared() > 0.1f)
+                // Stop if velocity is very small
+                if (_velocity.LengthSquared() < 1f)
                 {
+                    _velocity = Vector2.Zero;
+                }
+                
+                // Priority: If aim target is set, rotate toward it immediately (for shooting)
+                // Otherwise, face velocity direction while coasting
+                if (_aimTarget.HasValue)
+                {
+                    var aimDirection = _aimTarget.Value - Position;
+                    if (aimDirection.LengthSquared() > 0.1f) // Only rotate if target is not too close
+                    {
+                        // Calculate target rotation to face aim direction
+                        float targetRotation = (float)Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
+                        
+                        // Calculate shortest rotation path
+                        float angleDiff = targetRotation - Rotation;
+                        
+                        // Normalize angle difference to [-Pi, Pi]
+                        while (angleDiff > MathHelper.Pi)
+                            angleDiff -= MathHelper.TwoPi;
+                        while (angleDiff < -MathHelper.Pi)
+                            angleDiff += MathHelper.TwoPi;
+                        
+                        // Calculate rotation speed based on angle - faster for smaller angles
+                        float absAngleDiff = Math.Abs(angleDiff);
+                        float angleSpeedMultiplier;
+                        if (absAngleDiff < MathHelper.PiOver4) // Less than 45 degrees
+                        {
+                            angleSpeedMultiplier = 1.0f; // Full speed
+                        }
+                        else if (absAngleDiff < MathHelper.PiOver2) // Less than 90 degrees
+                        {
+                            angleSpeedMultiplier = 0.75f; // 75% speed
+                        }
+                        else if (absAngleDiff < MathHelper.Pi * 0.75f) // Less than 135 degrees
+                        {
+                            angleSpeedMultiplier = 0.5f; // 50% speed
+                        }
+                        else // 135+ degrees (sharp turn)
+                        {
+                            angleSpeedMultiplier = 0.25f; // 25% speed for very sharp turns
+                        }
+                        
+                        float rotationDelta = AimRotationSpeed * deltaTime * angleSpeedMultiplier;
+                        
+                        // Rotate towards target
+                        if (Math.Abs(angleDiff) < rotationDelta)
+                        {
+                            Rotation = targetRotation;
+                        }
+                        else
+                        {
+                            Rotation += Math.Sign(angleDiff) * rotationDelta;
+                        }
+                    }
+                }
+                else if (_velocity.LengthSquared() > 0.1f)
+                {
+                    // Smoothly face velocity direction while coasting (only if no aim target)
                     float targetRotation = (float)Math.Atan2(_velocity.Y, _velocity.X) + MathHelper.PiOver2;
                     float angleDiff = targetRotation - Rotation;
                     while (angleDiff > MathHelper.Pi) angleDiff -= MathHelper.TwoPi;
@@ -226,12 +362,6 @@ namespace Planet9.Entities
                         Rotation = targetRotation;
                     else
                         Rotation += Math.Sign(angleDiff) * rotationDelta;
-                }
-                
-                // Stop if velocity is very small
-                if (_velocity.LengthSquared() < 1f)
-                {
-                    _velocity = Vector2.Zero;
                 }
                 
                 // Apply drift when idle (not moving and velocity is near zero)
@@ -255,39 +385,6 @@ namespace Planet9.Entities
                     
                     // Apply drift to position
                     Position += driftVelocity * deltaTime;
-                }
-                
-                // When not moving, rotate toward aim target (mouse cursor/firing direction)
-                if (_aimTarget.HasValue)
-                {
-                    var aimDirection = _aimTarget.Value - Position;
-                    if (aimDirection.LengthSquared() > 0.1f) // Only rotate if target is not too close
-                    {
-                        // Calculate target rotation to face aim direction
-                        float targetRotation = (float)Math.Atan2(aimDirection.Y, aimDirection.X) + MathHelper.PiOver2;
-                        
-                        // Smoothly rotate towards target direction using aim rotation speed (reduced for smoother turning)
-                        float rotationDelta = AimRotationSpeed * deltaTime * 0.8f; // 20% reduction for smoother turning
-                        
-                        // Calculate shortest rotation path
-                        float angleDiff = targetRotation - Rotation;
-                        
-                        // Normalize angle difference to [-Pi, Pi]
-                        while (angleDiff > MathHelper.Pi)
-                            angleDiff -= MathHelper.TwoPi;
-                        while (angleDiff < -MathHelper.Pi)
-                            angleDiff += MathHelper.TwoPi;
-                        
-                        // Rotate towards target
-                        if (Math.Abs(angleDiff) < rotationDelta)
-                        {
-                            Rotation = targetRotation;
-                        }
-                        else
-                        {
-                            Rotation += Math.Sign(angleDiff) * rotationDelta;
-                        }
-                    }
                 }
             }
         }
@@ -324,6 +421,23 @@ namespace Planet9.Entities
                     0f
                 );
             }
+            
+            // Draw damage effect (smoke/sparks) after ship so it appears on top
+            if (_damageEffect != null && alpha > 0.01f)
+            {
+                _damageEffect.Draw(spriteBatch);
+            }
+            
+            // Draw explosion effect (after ship and damage, so it appears on top)
+            if (_explosionEffect != null && _explosionEffect.IsActive)
+            {
+                _explosionEffect.Draw(spriteBatch);
+            }
+        }
+        
+        public ExplosionEffect? GetExplosionEffect()
+        {
+            return _explosionEffect;
         }
     }
 }

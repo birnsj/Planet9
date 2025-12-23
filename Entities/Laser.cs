@@ -14,12 +14,17 @@ namespace Planet9.Entities
         private Color _coreColor = Color.White;
         private static Texture2D? _pixelTexture;
         private GraphicsDevice _graphicsDevice;
+        
+        public float Damage { get; set; } = 10f; // Damage dealt by this laser
+        public Entity? Owner { get; set; } = null; // Ship that fired this laser (null = player)
 
-        public Laser(Vector2 startPosition, float direction, GraphicsDevice graphicsDevice)
+        public Laser(Vector2 startPosition, float direction, GraphicsDevice graphicsDevice, float damage = 10f, Entity? owner = null)
         {
             Position = startPosition;
             Rotation = direction;
             _graphicsDevice = graphicsDevice;
+            Damage = damage;
+            Owner = owner;
             
             // Calculate velocity based on direction
             Velocity = new Vector2(
