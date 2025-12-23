@@ -31,20 +31,25 @@ namespace Planet9.Entities
         protected EngineTrail? _engineTrail;
         protected DamageEffect? _damageEffect;
         protected ExplosionEffect? _explosionEffect;
-        protected System.Random _driftRandom = new System.Random(); // Random for drift direction
+        protected System.Random? _driftRandom; // Random for drift direction (set from services)
         protected float _driftDirection = 0f; // Current drift direction in radians
         protected float _driftDirectionChangeTimer = 0f; // Timer for changing drift direction
 
-        public PlayerShip(GraphicsDevice graphicsDevice, ContentManager content)
+        public PlayerShip(GraphicsDevice graphicsDevice, ContentManager content, System.Random? random = null)
         {
             _graphicsDevice = graphicsDevice;
             _content = content;
             Rotation = 0f; // Ship points up (north) by default
             _targetPosition = Position;
             LoadTexture();
-            _engineTrail = new EngineTrail(_graphicsDevice);
-            _damageEffect = new DamageEffect(_graphicsDevice);
-            _explosionEffect = new ExplosionEffect(_graphicsDevice);
+            
+            // Use provided Random or create fallback
+            _driftRandom = random ?? new System.Random();
+            
+            // Pass Random to particle effects
+            _engineTrail = new EngineTrail(_graphicsDevice, _driftRandom);
+            _damageEffect = new DamageEffect(_graphicsDevice, _driftRandom);
+            _explosionEffect = new ExplosionEffect(_graphicsDevice, _driftRandom);
         }
         
         public Vector2 TargetPosition => _targetPosition; // Public property to access target position
@@ -149,8 +154,8 @@ namespace Planet9.Entities
                 _engineTrail.Update(deltaTime, Position, Rotation, currentSpeed, _texture.Width, _texture.Height);
             }
             
-            // Health regeneration (only if ship is alive, not at full health, and NOT fleeing)
-            if (Health > 0f && Health < MaxHealth && !IsFleeing)
+            // Health regeneration (only if ship is alive and not at full health)
+            if (Health > 0f && Health < MaxHealth)
             {
                 Health += HealthRegenRate * deltaTime;
                 if (Health > MaxHealth)
@@ -381,8 +386,11 @@ namespace Planet9.Entities
                     if (_driftDirectionChangeTimer <= 0f)
                     {
                         // Pick a new random drift direction
-                        _driftDirection = (float)(_driftRandom.NextDouble() * MathHelper.TwoPi);
-                        _driftDirectionChangeTimer = (float)(_driftRandom.NextDouble() * 2f + 1f); // 1-3 seconds
+                        if (_driftRandom != null)
+                        {
+                            _driftDirection = (float)(_driftRandom.NextDouble() * MathHelper.TwoPi);
+                            _driftDirectionChangeTimer = (float)(_driftRandom.NextDouble() * 2f + 1f); // 1-3 seconds
+                        }
                     }
                     
                     // Apply drift velocity in random direction

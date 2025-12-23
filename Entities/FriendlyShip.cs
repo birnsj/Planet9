@@ -9,8 +9,8 @@ namespace Planet9.Entities
         private float _targetRotation = 0f; // Smooth rotation target
         public bool IsIdle { get; set; } = false; // Track if ship is in idle behavior
         
-        public FriendlyShip(GraphicsDevice graphicsDevice, ContentManager content) 
-            : base(graphicsDevice, content)
+        public FriendlyShip(GraphicsDevice graphicsDevice, ContentManager content, System.Random? random = null) 
+            : base(graphicsDevice, content, random)
         {
             _targetRotation = Rotation;
         }
@@ -39,6 +39,16 @@ namespace Planet9.Entities
             if (_texture != null && _engineTrail != null)
             {
                 _engineTrail.Update(deltaTime, Position, Rotation, currentSpeed, _texture.Width, _texture.Height);
+            }
+            
+            // Health regeneration (only if ship is alive and not at full health)
+            if (Health > 0f && Health < MaxHealth)
+            {
+                Health += HealthRegenRate * deltaTime;
+                if (Health > MaxHealth)
+                {
+                    Health = MaxHealth; // Clamp to max health
+                }
             }
             
             // Update damage effect (activate when ship is damaged and remain active while damaged)
@@ -188,8 +198,11 @@ namespace Planet9.Entities
                     if (_driftDirectionChangeTimer <= 0f)
                     {
                         // Change drift direction randomly every 1-3 seconds
-                        _driftDirection = (float)(_driftRandom.NextDouble() * Microsoft.Xna.Framework.MathHelper.TwoPi);
-                        _driftDirectionChangeTimer = (float)(_driftRandom.NextDouble() * 2f + 1f);
+                        if (_driftRandom != null)
+                        {
+                            _driftDirection = (float)(_driftRandom.NextDouble() * Microsoft.Xna.Framework.MathHelper.TwoPi);
+                            _driftDirectionChangeTimer = (float)(_driftRandom.NextDouble() * 2f + 1f);
+                        }
                     }
                     
                     // Apply drift velocity

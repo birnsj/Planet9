@@ -35,6 +35,9 @@ namespace Planet9
             Components.Add(_sceneManager);
             Services.AddService(typeof(SceneManager), _sceneManager);
             
+            // Add shared Random instance for all random number generation
+            Services.AddService(typeof(System.Random), new System.Random());
+            
             base.Initialize();
 
             // Initialize camera after base initialization
@@ -46,6 +49,9 @@ namespace Planet9
 
         protected override void LoadContent()
         {
+            // Initialize shared texture manager
+            Planet9.Core.SharedTextureManager.Initialize(GraphicsDevice);
+            
             // Initialize Myra
             MyraEnvironment.Game = this;
             
@@ -94,6 +100,13 @@ namespace Planet9
             GraphicsDevice.Clear(Color.Black);
 
             base.Draw(gameTime);
+        }
+
+        protected override void UnloadContent()
+        {
+            // Dispose shared textures when game exits
+            Planet9.Core.SharedTextureManager.DisposeAll();
+            base.UnloadContent();
         }
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Planet9.Core;
 
 namespace Planet9.Entities
 {
@@ -9,28 +10,27 @@ namespace Planet9.Entities
     {
         private List<Particle> _particles;
         private GraphicsDevice _graphicsDevice;
-        private static Texture2D? _particleTexture;
-        private System.Random _random = new System.Random();
+        private Texture2D? _particleTexture;
+        private System.Random? _random; // Shared Random instance
         private bool _hasExploded = false;
 
-        public ExplosionEffect(GraphicsDevice graphicsDevice)
+        public ExplosionEffect(GraphicsDevice graphicsDevice, System.Random? random = null)
         {
             _graphicsDevice = graphicsDevice;
             _particles = new List<Particle>();
             
-            // Create particle texture if needed
-            if (_particleTexture == null)
-            {
-                _particleTexture = new Texture2D(_graphicsDevice, 1, 1);
-                _particleTexture.SetData(new[] { Color.White });
-            }
+            // Get shared particle texture
+            _particleTexture = SharedTextureManager.GetPixelTexture(graphicsDevice);
+            
+            // Use provided Random or create fallback
+            _random = random ?? new System.Random();
         }
 
         public bool IsActive => _particles.Count > 0;
 
         public void Explode(Vector2 position)
         {
-            if (_hasExploded) return; // Only explode once
+            if (_hasExploded || _random == null) return; // Only explode once, safety check
             _hasExploded = true;
             
             // Create a massive burst of particles for the explosion
@@ -120,17 +120,7 @@ namespace Planet9.Entities
                     lifetime = 0.8f + (float)(_random.NextDouble() * 0.7f); // 0.8-1.5 seconds (longer)
                 }
                 
-                var particle = new Particle
-                {
-                    Position = particlePos,
-                    Velocity = velocity,
-                    Color = particleColor,
-                    Life = 1f,
-                    Size = size,
-                    LifeTime = lifetime,
-                    Age = 0f
-                };
-                
+                var particle = ParticlePool.Get(particlePos, velocity, particleColor, size, lifetime);
                 _particles.Add(particle);
             }
         }
@@ -144,6 +134,8 @@ namespace Planet9.Entities
                 
                 if (!_particles[i].IsAlive)
                 {
+                    // Return particle to pool before removing
+                    ParticlePool.Return(_particles[i]);
                     _particles.RemoveAt(i);
                 }
             }
@@ -178,6 +170,11 @@ namespace Planet9.Entities
 
         public void Clear()
         {
+            // Return all particles to pool before clearing
+            foreach (var particle in _particles)
+            {
+                ParticlePool.Return(particle);
+            }
             _particles.Clear();
             _hasExploded = false;
         }

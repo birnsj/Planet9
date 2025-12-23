@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Planet9.Core;
 
 namespace Planet9.Entities
 {
@@ -9,25 +10,24 @@ namespace Planet9.Entities
     {
         private List<Particle> _particles;
         private GraphicsDevice _graphicsDevice;
-        private static Texture2D? _particleTexture;
+        private Texture2D? _particleTexture;
         private const float ParticleLifetime = 2.5f; // Seconds (longer lifetime for more visibility)
         private const float EmissionRate = 80f; // Particles per second (more particles for better visibility)
         private float _timeSinceLastEmission = 0f;
         private const float EmissionInterval = 1f / EmissionRate;
         private bool _isActive = false;
-        private System.Random _random = new System.Random();
+        private System.Random? _random; // Shared Random instance
 
-        public DamageEffect(GraphicsDevice graphicsDevice)
+        public DamageEffect(GraphicsDevice graphicsDevice, System.Random? random = null)
         {
             _graphicsDevice = graphicsDevice;
             _particles = new List<Particle>();
             
-            // Create particle texture if needed
-            if (_particleTexture == null)
-            {
-                _particleTexture = new Texture2D(_graphicsDevice, 1, 1);
-                _particleTexture.SetData(new[] { Color.White });
-            }
+            // Get shared particle texture
+            _particleTexture = SharedTextureManager.GetPixelTexture(graphicsDevice);
+            
+            // Use provided Random or create fallback
+            _random = random ?? new System.Random();
         }
 
         public void SetActive(bool active)
@@ -39,6 +39,8 @@ namespace Planet9.Entities
 
         private void Emit(Vector2 position, float rotation)
         {
+            if (_random == null) return; // Safety check
+            
             // Emit smoke particles from random positions around the ship
             float angleVariation = (float)(_random.NextDouble() * MathHelper.TwoPi);
             float distanceVariation = (float)(_random.NextDouble() * 60f + 30f); // 30-90 pixels from center (larger area, more spread)
@@ -68,17 +70,10 @@ namespace Planet9.Entities
                 (byte)255
             );
             
-            var particle = new Particle
-            {
-                Position = emitPosition,
-                Velocity = velocity,
-                Color = particleColor,
-                Life = 1f,
-                Size = (float)(_random.NextDouble() * 10f + 8f), // 8-18 pixels (larger, more noticeable)
-                LifeTime = ParticleLifetime + (float)(_random.NextDouble() - 0.5) * 0.3f,
-                Age = 0f
-            };
-
+            float particleSize = (float)(_random.NextDouble() * 10f + 8f); // 8-18 pixels (larger, more noticeable)
+            float particleLifetime = ParticleLifetime + (float)(_random.NextDouble() - 0.5) * 0.3f;
+            
+            var particle = ParticlePool.Get(emitPosition, velocity, particleColor, particleSize, particleLifetime);
             _particles.Add(particle);
             
             // More frequently emit a spark (bright orange/yellow) for better visibility
@@ -100,17 +95,10 @@ namespace Planet9.Entities
                     (byte)255
                 );
                 
-                var spark = new Particle
-                {
-                    Position = emitPosition,
-                    Velocity = sparkVelocity,
-                    Color = sparkColor,
-                    Life = 1f,
-                    Size = (float)(_random.NextDouble() * 8f + 6f), // 6-14 pixels (larger, much more visible)
-                    LifeTime = 1.0f + (float)(_random.NextDouble() - 0.5) * 0.4f, // Longer lifetime
-                    Age = 0f
-                };
+                float sparkSize = (float)(_random.NextDouble() * 8f + 6f); // 6-14 pixels (larger, much more visible)
+                float sparkLifetime = 1.0f + (float)(_random.NextDouble() - 0.5) * 0.4f; // Longer lifetime
                 
+                var spark = ParticlePool.Get(emitPosition, sparkVelocity, sparkColor, sparkSize, sparkLifetime);
                 _particles.Add(spark);
             }
         }
@@ -144,6 +132,8 @@ namespace Planet9.Entities
                 
                 if (!_particles[i].IsAlive)
                 {
+                    // Return particle to pool before removing
+                    ParticlePool.Return(_particles[i]);
                     _particles.RemoveAt(i);
                 }
             }
@@ -186,6 +176,11 @@ namespace Planet9.Entities
 
         public void Clear()
         {
+            // Return all particles to pool before clearing
+            foreach (var particle in _particles)
+            {
+                ParticlePool.Return(particle);
+            }
             _particles.Clear();
         }
     }

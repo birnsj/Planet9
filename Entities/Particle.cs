@@ -15,6 +15,20 @@ namespace Planet9.Entities
 
         public bool IsAlive => Life > 0f;
 
+        /// <summary>
+        /// Reset particle for reuse in object pool
+        /// </summary>
+        public void Reset(Vector2 position, Vector2 velocity, Color color, float size, float lifetime)
+        {
+            Position = position;
+            Velocity = velocity;
+            Color = color;
+            Size = size;
+            LifeTime = lifetime;
+            Life = 1f;
+            Age = 0f;
+        }
+
         public void Update(float deltaTime)
         {
             Age += deltaTime;

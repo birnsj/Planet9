@@ -2,6 +2,7 @@ using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using MonoGame.Extended;
+using Planet9.Core;
 
 namespace Planet9.Entities
 {
@@ -12,7 +13,7 @@ namespace Planet9.Entities
         private const float LaserWidth = 4f; // Thinner lasers
         private Color _laserColor = Color.Red;
         private Color _coreColor = Color.White;
-        private static Texture2D? _pixelTexture;
+        private Texture2D? _pixelTexture;
         private GraphicsDevice _graphicsDevice;
         
         public float Damage { get; set; } = 10f; // Damage dealt by this laser
@@ -20,24 +21,34 @@ namespace Planet9.Entities
 
         public Laser(Vector2 startPosition, float direction, GraphicsDevice graphicsDevice, float damage = 10f, Entity? owner = null)
         {
+            _graphicsDevice = graphicsDevice;
+            
+            // Get shared pixel texture (only once)
+            if (_pixelTexture == null)
+            {
+                _pixelTexture = SharedTextureManager.GetPixelTexture(graphicsDevice);
+            }
+            
+            // Initialize laser
+            Reset(startPosition, direction, damage, owner);
+        }
+
+        /// <summary>
+        /// Reset laser for reuse in object pool
+        /// </summary>
+        public void Reset(Vector2 startPosition, float direction, float damage, Entity? owner)
+        {
             Position = startPosition;
             Rotation = direction;
-            _graphicsDevice = graphicsDevice;
             Damage = damage;
             Owner = owner;
+            IsActive = true;
             
             // Calculate velocity based on direction
             Velocity = new Vector2(
                 (float)Math.Cos(direction - MathHelper.PiOver2),
                 (float)Math.Sin(direction - MathHelper.PiOver2)
             ) * LaserSpeed;
-            
-            // Create pixel texture if needed
-            if (_pixelTexture == null)
-            {
-                _pixelTexture = new Texture2D(_graphicsDevice, 1, 1);
-                _pixelTexture.SetData(new[] { Color.White });
-            }
         }
 
         public override void Update(GameTime gameTime)

@@ -6,8 +6,8 @@ namespace Planet9.Entities
 {
     public class EnemyShip : FriendlyShip
     {
-        public EnemyShip(GraphicsDevice graphicsDevice, ContentManager content) 
-            : base(graphicsDevice, content)
+        public EnemyShip(GraphicsDevice graphicsDevice, ContentManager content, System.Random? random = null) 
+            : base(graphicsDevice, content, random)
         {
         }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Planet9.Core;
 
 namespace Planet9.Entities
 {
@@ -9,23 +10,23 @@ namespace Planet9.Entities
     {
         private List<Particle> _particles;
         private GraphicsDevice _graphicsDevice;
-        private static Texture2D? _particleTexture;
+        private Texture2D? _particleTexture;
+        private System.Random? _random; // Shared Random instance
         private const float ParticleLifetime = 0.8f; // Seconds (longer lifetime)
         private const float EmissionRate = 120f; // Particles per second (more particles)
         private float _timeSinceLastEmission = 0f;
         private const float EmissionInterval = 1f / EmissionRate;
 
-        public EngineTrail(GraphicsDevice graphicsDevice)
+        public EngineTrail(GraphicsDevice graphicsDevice, System.Random? random = null)
         {
             _graphicsDevice = graphicsDevice;
             _particles = new List<Particle>();
             
-            // Create particle texture if needed
-            if (_particleTexture == null)
-            {
-                _particleTexture = new Texture2D(_graphicsDevice, 1, 1);
-                _particleTexture.SetData(new[] { Color.White });
-            }
+            // Get shared particle texture
+            _particleTexture = SharedTextureManager.GetPixelTexture(graphicsDevice);
+            
+            // Use provided Random or create fallback
+            _random = random ?? new System.Random();
         }
 
         public void Emit(Vector2 position, float rotation, float speed, float textureWidth, float textureHeight, float spriteX, float spriteY)
@@ -52,35 +53,32 @@ namespace Planet9.Entities
                 (float)Math.Cos(rotation)
             );
 
-            // Add some randomness to position and velocity
-            var random = new Random();
-            float angleVariation = (float)(random.NextDouble() - 0.5) * 0.5f; // ±0.25 radians
-            float speedVariation = (float)(random.NextDouble() * 0.3f + 0.7f); // 70-100% of base speed
+            // Add some randomness to position and velocity (use shared Random instance)
+            if (_random == null) return; // Safety check
+            
+            float angleVariation = (float)(_random.NextDouble() - 0.5) * 0.5f; // ±0.25 radians
+            float speedVariation = (float)(_random.NextDouble() * 0.3f + 0.7f); // 70-100% of base speed
             
             var particleDirection = new Vector2(
                 backwardDirection.X * (float)Math.Cos(angleVariation) - backwardDirection.Y * (float)Math.Sin(angleVariation),
                 backwardDirection.X * (float)Math.Sin(angleVariation) + backwardDirection.Y * (float)Math.Cos(angleVariation)
             );
 
-            var particle = new Particle
-            {
-                Position = emitPosition + new Vector2(
-                    (float)(random.NextDouble() - 0.5) * 5f,
-                    (float)(random.NextDouble() - 0.5) * 5f
-                ),
-                Velocity = particleDirection * speed * speedVariation,
-                Color = new Color(
-                    (byte)(220 + random.Next(35)), // Brighter orange-red range
-                    (byte)(120 + random.Next(50)),
-                    (byte)(random.Next(20)),
-                    (byte)255
-                ),
-                Life = 1f,
-                Size = (float)(random.NextDouble() * 5f + 4f), // 4-9 pixels (larger)
-                LifeTime = ParticleLifetime + (float)(random.NextDouble() - 0.5) * 0.2f,
-                Age = 0f
-            };
-
+            Vector2 particlePosition = emitPosition + new Vector2(
+                (float)(_random.NextDouble() - 0.5) * 5f,
+                (float)(_random.NextDouble() - 0.5) * 5f
+            );
+            Vector2 particleVelocity = particleDirection * speed * speedVariation;
+            Color particleColor = new Color(
+                (byte)(220 + _random.Next(35)), // Brighter orange-red range
+                (byte)(120 + _random.Next(50)),
+                (byte)(_random.Next(20)),
+                (byte)255
+            );
+            float particleSize = (float)(_random.NextDouble() * 5f + 4f); // 4-9 pixels (larger)
+            float particleLifetime = ParticleLifetime + (float)(_random.NextDouble() - 0.5) * 0.2f;
+            
+            var particle = ParticlePool.Get(particlePosition, particleVelocity, particleColor, particleSize, particleLifetime);
             _particles.Add(particle);
         }
 
@@ -114,6 +112,8 @@ namespace Planet9.Entities
                 
                 if (!_particles[i].IsAlive)
                 {
+                    // Return particle to pool before removing
+                    ParticlePool.Return(_particles[i]);
                     _particles.RemoveAt(i);
                 }
             }
@@ -148,6 +148,11 @@ namespace Planet9.Entities
 
         public void Clear()
         {
+            // Return all particles to pool before clearing
+            foreach (var particle in _particles)
+            {
+                ParticlePool.Return(particle);
+            }
             _particles.Clear();
         }
     }
