@@ -89,6 +89,9 @@ namespace Planet9.Scenes
         // Combat manager - handles lasers, collisions, explosions
         private CombatManager? _combatManager;
         
+        // Weapons manager - handles weapon firing logic
+        private WeaponsManager? _weaponsManager;
+        
         // Collision manager - handles ship-to-ship collisions
         private CollisionManager? _collisionManager;
         
@@ -189,6 +192,10 @@ namespace Planet9.Scenes
             // Initialize combat manager early (needed for sound loading)
             _combatManager = new CombatManager(GraphicsDevice);
             _combatManager.Initialize(MapSize);
+            
+            // Initialize weapons manager
+            _weaponsManager = new WeaponsManager();
+            _weaponsManager.Initialize(_combatManager);
             
             // Load galaxy tile texture
             try
@@ -525,7 +532,7 @@ namespace Planet9.Scenes
             _uiManager.OnShipIdleRateChanged = (rate) => 
             { 
                 _shipIdleRate = rate; 
-                _behaviorManager?.SetDependencies(_playerShip, _friendlyShips, _enemyShips, _friendlyShipStates, _enemyShipStates, _pathfindingManager?.Grid, _combatManager, GetOrCreateShipState, GetOrCreateEnemyShipState, rate); 
+                _behaviorManager?.SetDependencies(_playerShip, _friendlyShips, _enemyShips, _friendlyShipStates, _enemyShipStates, _pathfindingManager?.Grid, _pathfindingManager, _collisionManager, _combatManager, _weaponsManager, GetOrCreateShipState, GetOrCreateEnemyShipState, rate); 
             };
             _uiManager.OnSFXSettingsChanged = (volume, enabled) => { _combatManager?.SetSFXSettings(volume, enabled); };
             _uiManager.GetPlayerShip = () => _playerShip;
@@ -620,7 +627,10 @@ namespace Planet9.Scenes
                 _friendlyShipStates,
                 _enemyShipStates,
                 _pathfindingManager?.Grid,
+                _pathfindingManager,
+                _collisionManager,
                 _combatManager,
+                _weaponsManager,
                 GetOrCreateShipState,
                 GetOrCreateEnemyShipState,
                 _shipIdleRate
@@ -871,54 +881,12 @@ namespace Planet9.Scenes
             // Right mouse button to fire lasers
             if (_inputManager?.WasRightButtonJustPressed == true && !isMouseOverAnyUI)
             {
-                // Fire lasers from player ship positions in the direction of the cursor
+                // Fire player ship weapons at cursor position
                 if (_playerShip != null)
                 {
                     // Convert mouse position to world coordinates
                     var mouseWorldPos = _inputManager?.MouseWorldPosition ?? Vector2.Zero;
-                    
-                    // Calculate direction to cursor for laser firing
-                    var directionToCursor = mouseWorldPos - _playerShip.Position;
-                    if (directionToCursor.LengthSquared() > 0.1f)
-                    {
-                        directionToCursor.Normalize();
-                        // Calculate laser direction (angle to cursor)
-                        float laserDirection = (float)Math.Atan2(directionToCursor.Y, directionToCursor.X) + MathHelper.PiOver2;
-                        
-                        var shipTexture = _playerShip.GetTexture();
-                        if (shipTexture != null)
-                        {
-                            float textureCenterX = shipTexture.Width / 2f;
-                            float textureCenterY = shipTexture.Height / 2f;
-                            float shipRotation = _playerShip.Rotation;
-                            float cos = (float)Math.Cos(shipRotation);
-                            float sin = (float)Math.Sin(shipRotation);
-                            
-                            // Helper function to create laser from sprite coordinates
-                            Action<float, float> fireLaserFromSpriteCoords = (float spriteX, float spriteY) =>
-                            {
-                                // Convert sprite coordinates to offset from ship center
-                                float offsetX = spriteX - textureCenterX;
-                                float offsetY = spriteY - textureCenterY;
-                                
-                                // Rotate the offset by ship's rotation to get world-space offset
-                                float rotatedX = offsetX * cos - offsetY * sin;
-                                float rotatedY = offsetX * sin + offsetY * cos;
-                                
-                                // Calculate laser spawn position
-                                Vector2 laserSpawnPosition = _playerShip.Position + new Vector2(rotatedX, rotatedY);
-                                
-                                // Fire laser in direction of cursor, not ship rotation
-                                _combatManager?.FireLaser(laserSpawnPosition, laserDirection, _playerShip.Damage, _playerShip);
-                            };
-                            
-                            // Fire first laser from sprite coordinates (210, 50)
-                            fireLaserFromSpriteCoords(210f, 50f);
-                            
-                            // Fire second laser from sprite coordinates (40, 50)
-                            fireLaserFromSpriteCoords(40f, 50f);
-                        }
-                    }
+                    _weaponsManager?.FirePlayerWeapon(_playerShip, mouseWorldPos);
                 }
             }
             
@@ -993,6 +961,12 @@ namespace Planet9.Scenes
                                  _inputManager?.IsKeyDown(Keys.S) == true || _inputManager?.IsKeyDown(Keys.D) == true;
             bool isCameraPanning = _isPanningToPlayer || isWASDPressed || _cameraVelocity.LengthSquared() > 1f || !_cameraFollowingPlayer;
             
+            // Update all ships using BehaviorManager (handles behavior, collision avoidance, and ship updates)
+            _behaviorManager?.UpdateAllShips(gameTime, MapSize);
+            
+            // Old ship update code moved to BehaviorManager.UpdateAllShips
+            // Keeping this comment for reference during migration
+            /*
             // Update friendly ships with collision avoidance (including player) and behavior system
             foreach (var friendlyShip in _friendlyShips)
             {
@@ -1591,7 +1565,10 @@ namespace Planet9.Scenes
                 // Behavior system: Update and execute current behavior
                 _behaviorManager?.UpdateFriendlyShipBehavior(friendlyShip, deltaTime);
             }
+            */
             
+            // Old enemy ship update code moved to BehaviorManager.UpdateAllShips
+            /*
             // Update enemy ships with aggressive behavior and collision avoidance (same system as friendly ships)
             foreach (var enemyShip in _enemyShips)
             {
@@ -1898,6 +1875,7 @@ namespace Planet9.Scenes
                 // Clamp position AFTER behavior system (in case behavior teleported ship off-screen)
                 _collisionManager?.ClampEnemyShipToMapBounds(enemyShip);
             }
+            */
             
             // Populate spatial grid and update combat systems (lasers, collisions, explosions)
             _combatManager?.PopulateSpatialGrid(_playerShip);

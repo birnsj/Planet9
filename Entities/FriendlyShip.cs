@@ -54,14 +54,24 @@ namespace Planet9.Entities
             // Update damage effect (activate when ship is damaged and remain active while damaged)
             if (_damageEffect != null)
             {
-                // Activate damage effect when ship has taken damage (Health < MaxHealth)
-                // This will show particles when fleeing starts and keep them active while the ship is damaged
+                // Activate damage effect only when ship has taken damage (Health < MaxHealth)
+                // Stop the effect when health is at full (Health >= MaxHealth)
                 bool shouldShowDamage = Health < MaxHealth && Health > 0f;
-                _damageEffect.SetActive(shouldShowDamage);
                 
-                if (shouldShowDamage)
+                if (Health >= MaxHealth)
                 {
-                    _damageEffect.Update(deltaTime, Position, Rotation);
+                    // At full health, stop the damage effect and clear existing particles
+                    _damageEffect.SetActive(false);
+                    _damageEffect.Clear();
+                }
+                else
+                {
+                    _damageEffect.SetActive(shouldShowDamage);
+                    
+                    if (shouldShowDamage)
+                    {
+                        _damageEffect.Update(deltaTime, Position, Rotation);
+                    }
                 }
             }
             

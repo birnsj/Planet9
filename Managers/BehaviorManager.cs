@@ -14,6 +14,7 @@ namespace Planet9.Managers
     {
         private const float MapSize = 8192f;
         private const float EnemyPlayerDetectionRange = 1500f; // Range at which enemy detects and switches to aggressive behavior
+        private const int MaxPathPoints = 100; // Maximum number of path points to store per ship
         
         // Behavior duration ranges (in seconds)
         private const float IdleMinDuration = 8f;
@@ -35,7 +36,10 @@ namespace Planet9.Managers
         private Dictionary<FriendlyShip, ShipState>? _friendlyShipStates;
         private Dictionary<EnemyShip, EnemyShipState>? _enemyShipStates;
         private PathfindingGrid? _pathfindingGrid;
+        private PathfindingManager? _pathfindingManager;
+        private CollisionManager? _collisionManager;
         private CombatManager? _combatManager;
+        private WeaponsManager? _weaponsManager;
         
         // Callbacks for ship state management
         private Func<FriendlyShip, ShipState>? _getOrCreateShipState;
@@ -56,7 +60,10 @@ namespace Planet9.Managers
             Dictionary<FriendlyShip, ShipState> friendlyShipStates,
             Dictionary<EnemyShip, EnemyShipState> enemyShipStates,
             PathfindingGrid? pathfindingGrid,
+            PathfindingManager? pathfindingManager,
+            CollisionManager? collisionManager,
             CombatManager? combatManager,
+            WeaponsManager? weaponsManager,
             Func<FriendlyShip, ShipState> getOrCreateShipState,
             Func<EnemyShip, EnemyShipState> getOrCreateEnemyShipState,
             float shipIdleRate = 0.3f)
@@ -67,7 +74,10 @@ namespace Planet9.Managers
             _friendlyShipStates = friendlyShipStates;
             _enemyShipStates = enemyShipStates;
             _pathfindingGrid = pathfindingGrid;
+            _pathfindingManager = pathfindingManager;
+            _collisionManager = collisionManager;
             _combatManager = combatManager;
+            _weaponsManager = weaponsManager;
             _getOrCreateShipState = getOrCreateShipState;
             _getOrCreateEnemyShipState = getOrCreateEnemyShipState;
             _shipIdleRate = shipIdleRate;
@@ -485,7 +495,7 @@ namespace Planet9.Managers
             return distToPlayer < minSafeDistance;
         }
         
-        private Vector2 AvoidPlayerPosition(Vector2 position, FriendlyShip friendlyShip)
+        private Vector2 AvoidPlayerPosition(Vector2 position, FriendlyShip friendlyShip, float mapSize)
         {
             // Clamp position to map bounds (keep ships within galaxy map)
             const float mapBoundaryMargin = 200f;
@@ -494,8 +504,8 @@ namespace Planet9.Managers
             {
                 // Clamp position to map bounds
                 return new Vector2(
-                    MathHelper.Clamp(position.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
-                    MathHelper.Clamp(position.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
+                    MathHelper.Clamp(position.X, mapBoundaryMargin, mapSize - mapBoundaryMargin),
+                    MathHelper.Clamp(position.Y, mapBoundaryMargin, mapSize - mapBoundaryMargin)
                 );
             }
             
@@ -511,8 +521,8 @@ namespace Planet9.Managers
                 
                 // Clamp adjusted position to map bounds
                 adjustedPosition = new Vector2(
-                    MathHelper.Clamp(adjustedPosition.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
-                    MathHelper.Clamp(adjustedPosition.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
+                    MathHelper.Clamp(adjustedPosition.X, mapBoundaryMargin, mapSize - mapBoundaryMargin),
+                    MathHelper.Clamp(adjustedPosition.Y, mapBoundaryMargin, mapSize - mapBoundaryMargin)
                 );
                 
                 return adjustedPosition;
@@ -520,8 +530,8 @@ namespace Planet9.Managers
             
             // Clamp original position to map bounds
             return new Vector2(
-                MathHelper.Clamp(position.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
-                MathHelper.Clamp(position.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
+                MathHelper.Clamp(position.X, mapBoundaryMargin, mapSize - mapBoundaryMargin),
+                MathHelper.Clamp(position.Y, mapBoundaryMargin, mapSize - mapBoundaryMargin)
             );
         }
         
@@ -546,7 +556,7 @@ namespace Planet9.Managers
             return false;
         }
         
-        private Vector2 AvoidOtherShipsPosition(Vector2 position, FriendlyShip friendlyShip)
+        private Vector2 AvoidOtherShipsPosition(Vector2 position, FriendlyShip friendlyShip, float mapSize)
         {
             if (_friendlyShips == null) return position;
             
@@ -573,8 +583,8 @@ namespace Planet9.Managers
             
             // Clamp to map bounds
             adjustedPosition = new Vector2(
-                MathHelper.Clamp(adjustedPosition.X, mapBoundaryMargin, MapSize - mapBoundaryMargin),
-                MathHelper.Clamp(adjustedPosition.Y, mapBoundaryMargin, MapSize - mapBoundaryMargin)
+                MathHelper.Clamp(adjustedPosition.X, mapBoundaryMargin, mapSize - mapBoundaryMargin),
+                MathHelper.Clamp(adjustedPosition.Y, mapBoundaryMargin, mapSize - mapBoundaryMargin)
             );
             
             return adjustedPosition;
@@ -659,7 +669,7 @@ namespace Planet9.Managers
                 // Avoid player's radius - adjust target if too close
                 if (IsTooCloseToPlayer(nextTarget, friendlyShip))
                 {
-                    nextTarget = AvoidPlayerPosition(nextTarget, friendlyShip);
+                    nextTarget = AvoidPlayerPosition(nextTarget, friendlyShip, MapSize);
                     // Clamp to map bounds after adjustment
                     const float margin = 200f;
                     nextTarget = new Vector2(
@@ -671,7 +681,7 @@ namespace Planet9.Managers
                 // Avoid other ships' radius - adjust target if too close
                 if (IsTooCloseToOtherShips(nextTarget, friendlyShip))
                 {
-                    nextTarget = AvoidOtherShipsPosition(nextTarget, friendlyShip);
+                    nextTarget = AvoidOtherShipsPosition(nextTarget, friendlyShip, MapSize);
                     // Clamp to map bounds after adjustment
                     const float margin = 200f;
                     nextTarget = new Vector2(
@@ -738,7 +748,7 @@ namespace Planet9.Managers
                 {
                     if (IsTooCloseToPlayer(point, friendlyShip))
                     {
-                        point = AvoidPlayerPosition(point, friendlyShip);
+                        point = AvoidPlayerPosition(point, friendlyShip, MapSize);
                         // Re-clamp after adjustment
                         point = new Vector2(
                             MathHelper.Clamp(point.X, margin, MapSize - margin),
@@ -750,7 +760,7 @@ namespace Planet9.Managers
                 // Avoid other ships' radius when creating patrol points
                 if (IsTooCloseToOtherShips(point, friendlyShip))
                 {
-                    point = AvoidOtherShipsPosition(point, friendlyShip);
+                    point = AvoidOtherShipsPosition(point, friendlyShip, MapSize);
                     // Re-clamp after adjustment
                     point = new Vector2(
                         MathHelper.Clamp(point.X, margin, MapSize - margin),
@@ -852,7 +862,7 @@ namespace Planet9.Managers
                 // Avoid player's radius - adjust target if too close
                 if (IsTooCloseToPlayer(targetPos, friendlyShip))
                 {
-                    targetPos = AvoidPlayerPosition(targetPos, friendlyShip);
+                    targetPos = AvoidPlayerPosition(targetPos, friendlyShip, MapSize);
                     // Re-clamp after adjustment to keep within map bounds
                     targetPos = new Vector2(
                         MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
@@ -863,7 +873,7 @@ namespace Planet9.Managers
                 // Avoid other ships' radius - adjust target if too close
                 if (IsTooCloseToOtherShips(targetPos, friendlyShip))
                 {
-                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip);
+                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip, MapSize);
                     // Re-clamp after adjustment to keep within map bounds
                     targetPos = new Vector2(
                         MathHelper.Clamp(targetPos.X, targetMargin, MapSize - targetMargin),
@@ -983,7 +993,7 @@ namespace Planet9.Managers
                     // Avoid other ships' radius when setting flee target (but don't recalculate if already avoiding)
                     if (IsTooCloseToOtherShips(fleeTarget, friendlyShip))
                     {
-                        fleeTarget = AvoidOtherShipsPosition(fleeTarget, friendlyShip);
+                        fleeTarget = AvoidOtherShipsPosition(fleeTarget, friendlyShip, MapSize);
                         fleeTarget = new Vector2(
                             MathHelper.Clamp(fleeTarget.X, margin, MapSize - margin),
                             MathHelper.Clamp(fleeTarget.Y, margin, MapSize - margin)
@@ -1108,7 +1118,7 @@ namespace Planet9.Managers
                 // Ensure target avoids player's radius
                 if (IsTooCloseToPlayer(targetPos, friendlyShip))
                 {
-                    targetPos = AvoidPlayerPosition(targetPos, friendlyShip);
+                    targetPos = AvoidPlayerPosition(targetPos, friendlyShip, MapSize);
                     // Re-clamp to map bounds
                     const float margin = 200f;
                     targetPos = new Vector2(
@@ -1120,7 +1130,7 @@ namespace Planet9.Managers
                 // Ensure target avoids other ships' radius
                 if (IsTooCloseToOtherShips(targetPos, friendlyShip))
                 {
-                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip);
+                    targetPos = AvoidOtherShipsPosition(targetPos, friendlyShip, MapSize);
                     // Re-clamp to map bounds
                     const float margin = 200f;
                     targetPos = new Vector2(
@@ -1205,8 +1215,8 @@ namespace Planet9.Managers
                 var enemyStateForAttack = _getOrCreateEnemyShipState(enemyShip);
                 if (distanceToPlayer < attackRange && enemyStateForAttack.AttackCooldown <= 0f)
                 {
-                    // Fire laser at player
-                    FireEnemyLaser(enemyShip);
+                    // Fire weapon at player
+                    _weaponsManager?.FireEnemyWeapon(enemyShip);
                     enemyStateForAttack.AttackCooldown = attackCooldownTime;
                 }
             }
@@ -1217,37 +1227,1037 @@ namespace Planet9.Managers
             }
         }
         
-        private void FireEnemyLaser(EnemyShip enemyShip)
+        /// <summary>
+        /// Update all ships (friendly and enemy) - handles behavior, collision avoidance, and ship updates
+        /// This is the main entry point for all ship updates (except player)
+        /// </summary>
+        public void UpdateAllShips(GameTime gameTime, float mapSize)
         {
-            if (enemyShip == null || _combatManager == null) return;
-            
-            var shipTexture = enemyShip.GetTexture();
-            if (shipTexture == null) return;
-            
-            float textureCenterX = shipTexture.Width / 2f;
-            float textureCenterY = shipTexture.Height / 2f;
-            float shipRotation = enemyShip.Rotation;
-            float cos = (float)Math.Cos(shipRotation);
-            float sin = (float)Math.Sin(shipRotation);
-            
-            // Fire laser from center of ship (front)
-            float spriteX = textureCenterX;
-            float spriteY = 20f; // Near the front of the ship
-            
-            // Convert sprite coordinates to offset from ship center
-            float offsetX = spriteX - textureCenterX;
-            float offsetY = spriteY - textureCenterY;
-            
-            // Rotate the offset by ship's rotation to get world-space offset
-            float rotatedX = offsetX * cos - offsetY * sin;
-            float rotatedY = offsetX * sin + offsetY * cos;
-            
-            // Calculate laser spawn position
-            Vector2 laserSpawnPosition = enemyShip.Position + new Vector2(rotatedX, rotatedY);
-            
-            // Fire laser using combat manager
-            _combatManager.FireLaser(laserSpawnPosition, shipRotation, enemyShip.Damage, enemyShip);
+            if (_friendlyShips == null || _enemyShips == null) return;
+            if (_getOrCreateShipState == null || _getOrCreateEnemyShipState == null) return;
+
+            var deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // Update all friendly ships
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                // Handle collision avoidance and movement
+                HandleFriendlyShipCollisionAvoidance(friendlyShip, deltaTime, mapSize);
+                
+                // Update ship position and rotation
+                friendlyShip.Update(gameTime);
+                
+                // Ship-to-ship collision detection and resolution
+                _collisionManager?.HandleFriendlyShipCollisions(friendlyShip, _friendlyShips);
+                _collisionManager?.HandleFriendlyPlayerCollision(friendlyShip, _playerShip);
+                
+                // Update behavior system
+                UpdateFriendlyShipBehavior(friendlyShip, deltaTime);
+                
+                // Track last position and direction for smooth pathing
+                UpdateShipTracking(friendlyShip);
+            }
+
+            // Update all enemy ships
+            foreach (var enemyShip in _enemyShips)
+            {
+                // Handle collision avoidance and movement
+                HandleEnemyShipCollisionAvoidance(enemyShip, deltaTime, mapSize);
+                
+                // Update ship position and rotation
+                enemyShip.Update(gameTime);
+                
+                // Ship-to-ship collision detection and resolution
+                _collisionManager?.HandleEnemyFriendlyCollision(enemyShip, _friendlyShips);
+                _collisionManager?.HandleEnemyPlayerCollision(enemyShip, _playerShip);
+                _collisionManager?.HandleEnemyShipCollisions(enemyShip, _enemyShips);
+                
+                // Update behavior system
+                UpdateEnemyShipBehavior(enemyShip, deltaTime);
+                
+                // Clamp position AFTER behavior system
+                _collisionManager?.ClampEnemyShipToMapBounds(enemyShip);
+            }
         }
+
+        private void HandleFriendlyShipCollisionAvoidance(FriendlyShip friendlyShip, float deltaTime, float mapSize)
+        {
+            if (_friendlyShips == null || _getOrCreateShipState == null) return;
+
+            // Collision avoidance: steer away from player (ship-to-ship collision disabled)
+            // Use each ship's own avoidance detection range
+            float playerAvoidanceRadius = friendlyShip.AvoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
+            float playerAvoidanceForce = 300f; // Stronger avoidance for player
+            Vector2 avoidanceVector = Vector2.Zero;
+            
+            // Orbit around player ship - create slow circular motion
+            if (_playerShip != null)
+            {
+                Vector2 toPlayer = _playerShip.Position - friendlyShip.Position;
+                float distance = toPlayer.Length();
+                
+                // Calculate look-ahead target for player avoidance check
+                Vector2 lookAheadTargetForPlayer = friendlyShip.Position;
+                if (friendlyShip.IsActivelyMoving())
+                {
+                    float shipRotation = friendlyShip.Rotation;
+                    Vector2 lookAheadDirection = new Vector2(
+                        (float)Math.Sin(shipRotation),
+                        -(float)Math.Cos(shipRotation)
+                    );
+                    float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                    lookAheadTargetForPlayer = friendlyShip.Position + lookAheadDirection * lookAheadDist;
+                }
+                
+                // Check if look-ahead target is within player's avoidance radius
+                Vector2 toLookAheadFromPlayer = lookAheadTargetForPlayer - _playerShip.Position;
+                float lookAheadDistanceFromPlayer = toLookAheadFromPlayer.Length();
+                float playerAvoidanceRadiusForLookAhead = _playerShip.AvoidanceDetectionRange * 1.33f; // 33% larger radius for player avoidance
+                bool lookAheadInPlayerRadius = lookAheadDistanceFromPlayer < playerAvoidanceRadiusForLookAhead;
+                
+                // Use a larger range for orbital behavior
+                float orbitRadius = friendlyShip.AvoidanceDetectionRange * 1.5f; // Orbit at 1.5x avoidance range
+                
+                if ((distance < orbitRadius || lookAheadInPlayerRadius) && distance > 0.1f)
+                {
+                    // Calculate desired orbit distance (maintain distance from player)
+                    float desiredDistance = friendlyShip.AvoidanceDetectionRange * 1.2f; // Orbit at 1.2x avoidance range
+                    
+                    // Calculate tangential direction (perpendicular to direction to player) for orbital motion
+                    Vector2 tangential = new Vector2(-toPlayer.Y, toPlayer.X);
+                    tangential.Normalize();
+                    
+                    // Calculate radial direction (toward/away from player to maintain orbit distance)
+                    Vector2 radialDirection = toPlayer;
+                    radialDirection.Normalize();
+                    
+                    // Calculate distance error (how far from desired orbit distance)
+                    float distanceError = distance - desiredDistance;
+                    
+                    // Blend tangential (orbital) motion with radial (distance correction) motion
+                    float tangentialWeight = 0.85f; // 85% tangential (orbital), 15% radial (distance correction)
+                    Vector2 orbitalDirection = tangential * tangentialWeight + radialDirection * (1f - tangentialWeight) * Math.Sign(-distanceError);
+                    orbitalDirection.Normalize();
+                    
+                    // Calculate orbital force (gentle, slow turning)
+                    float orbitalStrength = MathHelper.Clamp(Math.Abs(distanceError) / desiredDistance, 0.3f, 1f);
+                    float slowOrbitalForce = playerAvoidanceForce * 0.4f; // 40% of normal force for slow turning
+                    
+                    // Increase force if look-ahead is in player's radius (start turning immediately)
+                    if (lookAheadInPlayerRadius)
+                    {
+                        float lookAheadPenetration = (playerAvoidanceRadiusForLookAhead - lookAheadDistanceFromPlayer) / playerAvoidanceRadiusForLookAhead;
+                        orbitalStrength = MathHelper.Clamp(orbitalStrength + lookAheadPenetration * 0.5f, 0.5f, 1.5f);
+                        slowOrbitalForce = playerAvoidanceForce * (0.4f + lookAheadPenetration * 0.3f); // Increase force up to 70% when look-ahead is in radius
+                    }
+                    
+                    avoidanceVector += orbitalDirection * orbitalStrength * slowOrbitalForce;
+                }
+            }
+            
+            // Avoid other friendly ships with orbital motion (orbit around each other when navigating past)
+            float avoidanceRadius = friendlyShip.AvoidanceDetectionRange; // Use ship's own setting
+            float avoidanceForce = 300f; // Increased avoidance force for better steering
+            
+            // Calculate look-ahead target position (where the ship is looking ahead)
+            Vector2 lookAheadTarget = friendlyShip.Position;
+            if (friendlyShip.IsActivelyMoving())
+            {
+                // Calculate look-ahead target in the direction the ship is facing
+                float shipRotation = friendlyShip.Rotation;
+                Vector2 lookAheadDirection = new Vector2(
+                    (float)Math.Sin(shipRotation),
+                    -(float)Math.Cos(shipRotation)
+                );
+                float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                lookAheadTarget = friendlyShip.Position + lookAheadDirection * lookAheadDist;
+            }
+            
+            foreach (var otherShip in _friendlyShips)
+            {
+                if (otherShip == friendlyShip) continue;
+                
+                Vector2 toOtherShip = otherShip.Position - friendlyShip.Position;
+                float distance = toOtherShip.Length();
+                
+                // Use the larger of the two ships' avoidance ranges to ensure ships never enter each other's radius
+                float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherShip.AvoidanceDetectionRange);
+                
+                // Check if look-ahead target is within other ship's avoidance radius
+                Vector2 toLookAheadFromOther = lookAheadTarget - otherShip.Position;
+                float lookAheadDistanceFromOther = toLookAheadFromOther.Length();
+                bool lookAheadInRadius = lookAheadDistanceFromOther < effectiveAvoidanceRadius;
+                
+                // Proactive avoidance: start veering away when approaching the avoidance radius (1.5x radius for early detection)
+                float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                
+                if ((distance < avoidanceDetectionRange || lookAheadInRadius) && distance > 0.1f)
+                {
+                    toOtherShip.Normalize();
+                    
+                    // Calculate radial direction (away from other ship)
+                    Vector2 radialDirection = -toOtherShip;
+                    
+                    // Calculate tangential direction (perpendicular for orbital motion)
+                    Vector2 tangentialDirection;
+                    if (friendlyShip.IsActivelyMoving())
+                    {
+                        // Use ship's velocity to determine orbit direction
+                        Vector2 shipVelocity = friendlyShip.Velocity;
+                        if (shipVelocity.LengthSquared() < 1f)
+                        {
+                            // If not moving much, try to use last position
+                            var shipStateForVel = _getOrCreateShipState(friendlyShip);
+                            if (shipStateForVel.LastPosition != Vector2.Zero)
+                            {
+                                shipVelocity = friendlyShip.Position - shipStateForVel.LastPosition;
+                            }
+                            
+                            if (shipVelocity.LengthSquared() < 1f)
+                            {
+                                // If still not moving, use a default orbit direction
+                                tangentialDirection = new Vector2(-toOtherShip.Y, toOtherShip.X);
+                            }
+                            else
+                            {
+                                shipVelocity.Normalize();
+                                // Choose tangential direction that's closer to ship's movement direction
+                                Vector2 tan1 = new Vector2(-toOtherShip.Y, toOtherShip.X);
+                                Vector2 tan2 = new Vector2(toOtherShip.Y, -toOtherShip.X);
+                                
+                                float dot1 = Vector2.Dot(shipVelocity, tan1);
+                                float dot2 = Vector2.Dot(shipVelocity, tan2);
+                                
+                                tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                            }
+                        }
+                        else
+                        {
+                            shipVelocity.Normalize();
+                            // Choose tangential direction that's closer to ship's movement direction
+                            Vector2 tan1 = new Vector2(-toOtherShip.Y, toOtherShip.X);
+                            Vector2 tan2 = new Vector2(toOtherShip.Y, -toOtherShip.X);
+                            
+                            float dot1 = Vector2.Dot(shipVelocity, tan1);
+                            float dot2 = Vector2.Dot(shipVelocity, tan2);
+                            
+                            tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                        }
+                    }
+                    else
+                    {
+                        // Default to clockwise orbit
+                        tangentialDirection = new Vector2(-toOtherShip.Y, toOtherShip.X);
+                    }
+                    tangentialDirection.Normalize();
+                    
+                    // Calculate base avoidance force for this collision
+                    float currentAvoidanceForce = avoidanceForce;
+                    
+                    // Calculate avoidance strength based on distance from avoidance radius
+                    float avoidanceStrength;
+                    
+                    if (lookAheadInRadius)
+                    {
+                        // Look-ahead target is in avoidance radius - start turning immediately
+                        float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromOther) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.5f + lookAheadPenetration * 2f; // Scale from 1.5 to 3.5
+                        currentAvoidanceForce = avoidanceForce * 1.5f; // Strong force to turn away
+                    }
+                    else if (distance < effectiveAvoidanceRadius)
+                    {
+                        // Inside avoidance radius - very strong avoidance
+                        avoidanceStrength = 1f + ((effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius) * 3f;
+                        currentAvoidanceForce = 500f; // Strong force to push away
+                    }
+                    else
+                    {
+                        // Approaching avoidance radius - moderate avoidance that increases as we get closer
+                        float approachFactor = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                        avoidanceStrength = approachFactor * 1.5f; // Scale from 0 to 1.5
+                        currentAvoidanceForce = avoidanceForce * (1f + approachFactor); // Increase force as approaching
+                    }
+                    
+                    // Blend radial (push away) and tangential (orbit) forces
+                    float radialWeight;
+                    float tangentialWeight;
+                    
+                    if (distance < effectiveAvoidanceRadius)
+                    {
+                        // Inside avoidance radius - prioritize radial (push away strongly)
+                        radialWeight = 0.9f; // 90% radial, 10% tangential
+                        tangentialWeight = 0.1f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.1f)
+                    {
+                        // Very close to avoidance radius - strong radial
+                        radialWeight = 0.7f; // 70% radial, 30% tangential
+                        tangentialWeight = 0.3f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.3f)
+                    {
+                        // Approaching avoidance radius - balanced
+                        radialWeight = 0.5f; // 50% radial, 50% tangential
+                        tangentialWeight = 0.5f;
+                    }
+                    else
+                    {
+                        // At safe distance, more orbital motion (gentle steering)
+                        radialWeight = 0.2f; // 20% radial, 80% tangential
+                        tangentialWeight = 0.8f;
+                    }
+                    
+                    // Combine radial and tangential forces for orbital motion
+                    Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                    orbitalDirection.Normalize();
+                    
+                    avoidanceVector += orbitalDirection * avoidanceStrength * currentAvoidanceForce;
+                }
+            }
+            
+            // Use A* pathfinding for obstacle avoidance
+            if (_pathfindingManager != null && friendlyShip.IsActivelyMoving() && _friendlyShips != null && _playerShip != null)
+            {
+                Vector2 currentTarget = friendlyShip.TargetPosition;
+                Vector2 currentPos = friendlyShip.Position;
+                float distanceToTarget = Vector2.Distance(currentPos, currentTarget);
+                
+                // Get ship state for this friendly ship
+                var shipStateForPath = _getOrCreateShipState(friendlyShip);
+                
+                // Check if target has changed - if so, reset progress tracking
+                if (shipStateForPath.LastTarget != Vector2.Zero)
+                {
+                    Vector2 lastTarget = shipStateForPath.LastTarget;
+                    if (Vector2.Distance(lastTarget, currentTarget) > 50f) // Target changed significantly
+                    {
+                        // Target changed - reset progress tracking
+                        shipStateForPath.ClosestDistanceToTarget = float.MaxValue;
+                        shipStateForPath.NoProgressTimer = 0f;
+                    }
+                }
+                shipStateForPath.LastTarget = currentTarget;
+                
+                // Track progress toward destination to detect if ship is trapped
+                if (shipStateForPath.ClosestDistanceToTarget == float.MaxValue)
+                {
+                    shipStateForPath.ClosestDistanceToTarget = distanceToTarget;
+                    shipStateForPath.NoProgressTimer = 0f;
+                }
+                
+                // Check if ship is making progress (getting closer to target)
+                float closestDistance = shipStateForPath.ClosestDistanceToTarget;
+                bool isMakingProgress = distanceToTarget < closestDistance - 10f; // Must get at least 10 pixels closer
+                
+                if (isMakingProgress)
+                {
+                    // Ship is making progress - update closest distance and reset timer
+                    shipStateForPath.ClosestDistanceToTarget = distanceToTarget;
+                    shipStateForPath.NoProgressTimer = 0f;
+                }
+                else
+                {
+                    // Ship is not making progress - increment timer
+                    shipStateForPath.NoProgressTimer += deltaTime;
+                }
+                
+                // If ship hasn't made progress for 3 seconds, it's likely trapped - force new path
+                bool isTrapped = shipStateForPath.NoProgressTimer > 3.0f;
+                
+                // Check if we need to recalculate path
+                bool needsNewPath = false;
+                if (isTrapped)
+                {
+                    needsNewPath = true;
+                    shipStateForPath.ClosestDistanceToTarget = float.MaxValue;
+                    shipStateForPath.NoProgressTimer = 0f;
+                }
+                if (shipStateForPath.AStarPath.Count == 0)
+                {
+                    needsNewPath = true;
+                }
+                else
+                {
+                    // Check if we've reached the current waypoint
+                    int currentWaypointIndex = shipStateForPath.CurrentWaypointIndex;
+                    
+                    if (currentWaypointIndex < shipStateForPath.AStarPath.Count)
+                    {
+                        Vector2 currentWaypoint = shipStateForPath.AStarPath[currentWaypointIndex];
+                        float distToWaypoint = Vector2.Distance(currentPos, currentWaypoint);
+                        
+                        if (distToWaypoint < 100f) // Reached waypoint
+                        {
+                            currentWaypointIndex++;
+                            shipStateForPath.CurrentWaypointIndex = currentWaypointIndex;
+                            
+                            // If we've reached all waypoints, check if we need a new path to final destination
+                            if (currentWaypointIndex >= shipStateForPath.AStarPath.Count)
+                            {
+                                float distToFinal = Vector2.Distance(currentPos, currentTarget);
+                                if (distToFinal > 100f)
+                                {
+                                    needsNewPath = true;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        needsNewPath = true;
+                    }
+                }
+                
+                // Update pathfinding grid with current obstacles
+                float obstacleRadius = friendlyShip.AvoidanceDetectionRange * 0.5f;
+                _pathfindingManager.UpdateObstacles(_friendlyShips, _playerShip, obstacleRadius);
+                
+                // Calculate A* path if needed
+                if (needsNewPath)
+                {
+                    var path = _pathfindingManager.FindPath(currentPos, currentTarget);
+                    shipStateForPath.AStarPath.Clear();
+                    shipStateForPath.AStarPath.AddRange(path);
+                    shipStateForPath.CurrentWaypointIndex = 0;
+                    
+                    // Reset progress tracking when calculating new path
+                    shipStateForPath.ClosestDistanceToTarget = float.MaxValue;
+                    shipStateForPath.NoProgressTimer = 0f;
+                }
+                
+                // Follow A* path waypoints with look-ahead for smoother turning
+                if (shipStateForPath.AStarPath.Count > 0)
+                {
+                    int waypointIndex = shipStateForPath.CurrentWaypointIndex;
+                    var path = shipStateForPath.AStarPath;
+                    
+                    if (waypointIndex < path.Count)
+                    {
+                        Vector2 currentWaypoint = path[waypointIndex];
+                        float distToWaypoint = Vector2.Distance(currentPos, currentWaypoint);
+                        
+                        // Look ahead in the path to find a future waypoint to turn toward
+                        Vector2 pathLookAheadTarget = currentWaypoint;
+                        float lookAheadDistance = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                        
+                        // Find the furthest waypoint we can see ahead
+                        float accumulatedDist = distToWaypoint;
+                        for (int i = waypointIndex + 1; i < path.Count; i++)
+                        {
+                            float segmentDist = Vector2.Distance(path[i - 1], path[i]);
+                            if (accumulatedDist + segmentDist <= lookAheadDistance)
+                            {
+                                accumulatedDist += segmentDist;
+                                pathLookAheadTarget = path[i];
+                            }
+                            else
+                            {
+                                // Interpolate to a point along this segment
+                                float remainingDist = lookAheadDistance - accumulatedDist;
+                                if (remainingDist > 0 && segmentDist > 0)
+                                {
+                                    Vector2 segmentDir = path[i] - path[i - 1];
+                                    segmentDir.Normalize();
+                                    pathLookAheadTarget = path[i - 1] + segmentDir * remainingDist;
+                                }
+                                break;
+                            }
+                        }
+                        
+                        // Ensure look-ahead target avoids player's radius
+                        if (IsTooCloseToPlayer(pathLookAheadTarget, friendlyShip))
+                        {
+                            pathLookAheadTarget = AvoidPlayerPosition(pathLookAheadTarget, friendlyShip, mapSize);
+                        }
+                        
+                        // Clamp look-ahead target to map bounds
+                        const float lookAheadMargin = 200f;
+                        pathLookAheadTarget = new Vector2(
+                            MathHelper.Clamp(pathLookAheadTarget.X, lookAheadMargin, mapSize - lookAheadMargin),
+                            MathHelper.Clamp(pathLookAheadTarget.Y, lookAheadMargin, mapSize - lookAheadMargin)
+                        );
+                        
+                        // Store look-ahead target for debug line drawing
+                        shipStateForPath.LookAheadTarget = pathLookAheadTarget;
+                        
+                        // Set target to look-ahead position for smoother turning
+                        friendlyShip.SetTargetPosition(pathLookAheadTarget);
+                    }
+                    else
+                    {
+                        // Reached end of path, go to final destination (clamped to map bounds)
+                        const float finalTargetMargin = 200f;
+                        Vector2 clampedTarget = new Vector2(
+                            MathHelper.Clamp(currentTarget.X, finalTargetMargin, mapSize - finalTargetMargin),
+                            MathHelper.Clamp(currentTarget.Y, finalTargetMargin, mapSize - finalTargetMargin)
+                        );
+                        
+                        // Calculate and store look-ahead target for debug line drawing
+                        Vector2 direction = clampedTarget - currentPos;
+                        if (direction.LengthSquared() > 0.1f)
+                        {
+                            direction.Normalize();
+                            float lookAheadDist = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance;
+                            Vector2 endPathLookAheadTarget = currentPos + direction * lookAheadDist;
+                            shipStateForPath.LookAheadTarget = endPathLookAheadTarget;
+                        }
+                        
+                        friendlyShip.SetTargetPosition(clampedTarget);
+                    }
+                }
+            }
+            else if (avoidanceVector.LengthSquared() > 0.1f)
+            {
+                // Fallback: use simple avoidance if pathfinding grid not available
+                avoidanceVector.Normalize();
+                float lookAheadDistance = friendlyShip.MoveSpeed * friendlyShip.LookAheadDistance * 0.8f;
+                Vector2 newAvoidanceTarget = friendlyShip.Position + avoidanceVector * lookAheadDistance;
+                
+                const float safeTargetMargin = 150f;
+                newAvoidanceTarget = new Vector2(
+                    MathHelper.Clamp(newAvoidanceTarget.X, safeTargetMargin, mapSize - safeTargetMargin),
+                    MathHelper.Clamp(newAvoidanceTarget.Y, safeTargetMargin, mapSize - safeTargetMargin)
+                );
+                
+                // Store look-ahead target for debug line drawing
+                var shipStateForAvoidance = _getOrCreateShipState(friendlyShip);
+                shipStateForAvoidance.LookAheadTarget = newAvoidanceTarget;
+                
+                friendlyShip.SetTargetPosition(newAvoidanceTarget);
+            }
+            
+            // Handle stuck detection and unstuck logic
+            HandleFriendlyShipStuckDetection(friendlyShip, deltaTime, mapSize);
+        }
+
+        private void HandleFriendlyShipStuckDetection(FriendlyShip friendlyShip, float deltaTime, float mapSize)
+        {
+            if (_getOrCreateShipState == null) return;
+
+            // Keep ship within map bounds - clamp position to prevent leaving map
+            const float shipMargin = 30f;
+            float clampedX = MathHelper.Clamp(friendlyShip.Position.X, shipMargin, mapSize - shipMargin);
+            float clampedY = MathHelper.Clamp(friendlyShip.Position.Y, shipMargin, mapSize - shipMargin);
+            
+            // Track ship position to detect if it's stuck
+            Vector2 clampedPosition = new Vector2(clampedX, clampedY);
+            bool isStuck = false;
+            var shipState = _getOrCreateShipState(friendlyShip);
+            
+            // Check if ship is stuck (not moving much)
+            if (shipState.LastPosition != Vector2.Zero)
+            {
+                Vector2 lastPos = shipState.LastPosition;
+                float distanceMoved = Vector2.Distance(clampedPosition, lastPos);
+                
+                // If ship hasn't moved much (less than 5 pixels) in the last frame, it might be stuck
+                if (distanceMoved < 5f)
+                {
+                    shipState.StuckTimer += deltaTime;
+                    
+                    // If stuck for more than 0.5 seconds, give it a new target
+                    if (shipState.StuckTimer > 0.5f)
+                    {
+                        isStuck = true;
+                    }
+                }
+                else
+                {
+                    // Ship is moving, reset stuck timer
+                    shipState.StuckTimer = 0f;
+                }
+            }
+            
+            // Also check if ship is stuck due to other ships blocking its path (even if actively moving)
+            // This is especially important for long distance behavior where ships can get stuck on each other
+            bool isBlockedByOtherShips = false;
+            if (friendlyShip.IsActivelyMoving() && _friendlyShips != null)
+            {
+                Vector2 currentTarget = friendlyShip.TargetPosition;
+                Vector2 toTarget = currentTarget - friendlyShip.Position;
+                float distanceToTarget = toTarget.Length();
+                
+                // Check if ship is very close to other ships and not making progress toward target
+                foreach (var otherShip in _friendlyShips)
+                {
+                    if (otherShip == friendlyShip) continue;
+                    
+                    Vector2 toOtherShip = otherShip.Position - friendlyShip.Position;
+                    float distanceToOther = toOtherShip.Length();
+                    float minSafeDistance = Math.Max(friendlyShip.AvoidanceDetectionRange, otherShip.AvoidanceDetectionRange);
+                    
+                    // If very close to another ship (within avoidance radius) and target is in similar direction
+                    if (distanceToOther < minSafeDistance * 1.2f && distanceToTarget > 100f)
+                    {
+                        // Check if the other ship is blocking the path to target
+                        Vector2 toTargetNormalized = toTarget;
+                        toTargetNormalized.Normalize();
+                        Vector2 toOtherNormalized = toOtherShip;
+                        toOtherNormalized.Normalize();
+                        
+                        float dot = Vector2.Dot(toTargetNormalized, toOtherNormalized);
+                        // If other ship is in front (blocking path) and very close
+                        if (dot > 0.7f && distanceToOther < minSafeDistance)
+                        {
+                            // Check if we're making progress - if not, we're stuck
+                            if (shipState.LastPosition != Vector2.Zero)
+                            {
+                                float progressTowardTarget = Vector2.Distance(shipState.LastPosition, currentTarget) - distanceToTarget;
+                                // If we're not getting closer to target (or moving very slowly toward it)
+                                if (progressTowardTarget < 10f)
+                                {
+                                    shipState.StuckTimer += deltaTime;
+                                    if (shipState.StuckTimer > 1.0f) // Give it 1 second to try to get unstuck
+                                    {
+                                        isBlockedByOtherShips = true;
+                                        isStuck = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            shipState.LastPosition = clampedPosition;
+            
+            // If ship was clamped or is stuck, give it a new target
+            bool wasClamped = (friendlyShip.Position.X != clampedX || friendlyShip.Position.Y != clampedY);
+            if ((wasClamped || isStuck) && (!friendlyShip.IsActivelyMoving() || isBlockedByOtherShips))
+            {
+                // Get current behavior to determine unstuck strategy
+                var shipStateForBehavior = _getOrCreateShipState(friendlyShip);
+                FriendlyShipBehavior currentBehavior = shipStateForBehavior.Behavior;
+                
+                Vector2 newTarget;
+                float safeMargin = 300f;
+                
+                // If stuck due to other ships blocking during long distance behavior, find a direction away from blocking ships
+                if (isBlockedByOtherShips && currentBehavior == FriendlyShipBehavior.LongDistance && _friendlyShips != null)
+                {
+                    // Find direction away from nearest blocking ship
+                    Vector2 awayFromBlocking = Vector2.Zero;
+                    float nearestBlockingDistance = float.MaxValue;
+                    
+                    foreach (var otherShip in _friendlyShips)
+                    {
+                        if (otherShip == friendlyShip) continue;
+                        
+                        Vector2 toOtherShip = friendlyShip.Position - otherShip.Position;
+                        float distanceToOther = toOtherShip.Length();
+                        float minSafeDistance = Math.Max(friendlyShip.AvoidanceDetectionRange, otherShip.AvoidanceDetectionRange);
+                        
+                        // If very close to this ship
+                        if (distanceToOther < minSafeDistance * 1.5f && distanceToOther < nearestBlockingDistance)
+                        {
+                            nearestBlockingDistance = distanceToOther;
+                            if (distanceToOther > 0.1f)
+                            {
+                                toOtherShip.Normalize();
+                                awayFromBlocking = toOtherShip; // Direction away from blocking ship
+                            }
+                        }
+                    }
+                    
+                    // If we found a blocking ship, move away from it
+                    if (awayFromBlocking.LengthSquared() > 0.1f)
+                    {
+                        // Add perpendicular component to avoid getting stuck in same pattern
+                        Vector2 perpendicular = new Vector2(-awayFromBlocking.Y, awayFromBlocking.X);
+                        if (_random.NextDouble() < 0.5f) perpendicular = -perpendicular;
+                        
+                        // Blend away direction with perpendicular for better avoidance
+                        Vector2 escapeDirection = (awayFromBlocking * 0.7f + perpendicular * 0.3f);
+                        escapeDirection.Normalize();
+                        
+                        // Set target far enough away to clear the blocking ships
+                        float escapeDistance = (float)(_random.NextDouble() * 1000f + 1500f); // 1500-2500 pixels
+                        newTarget = clampedPosition + escapeDirection * escapeDistance;
+                    }
+                    else
+                    {
+                        // Fallback: random direction
+                        float randomAngle = (float)(_random.NextDouble() * MathHelper.TwoPi);
+                        Vector2 direction = new Vector2(
+                            (float)Math.Cos(randomAngle),
+                            (float)Math.Sin(randomAngle)
+                        );
+                        float targetDistance = (float)(_random.NextDouble() * 1000f + 1500f);
+                        newTarget = clampedPosition + direction * targetDistance;
+                    }
+                }
+                else
+                {
+                    // Ship is stuck near edge - give it a new target well away from edge
+                    Vector2 awayFromEdge = Vector2.Zero;
+                    
+                    // Determine direction away from nearest edge
+                    float distToLeft = clampedX;
+                    float distToRight = mapSize - clampedX;
+                    float distToTop = clampedY;
+                    float distToBottom = mapSize - clampedY;
+                    
+                    float minDist = Math.Min(Math.Min(distToLeft, distToRight), Math.Min(distToTop, distToBottom));
+                    
+                    if (minDist == distToLeft)
+                        awayFromEdge = new Vector2(1f, 0f); // Move right
+                    else if (minDist == distToRight)
+                        awayFromEdge = new Vector2(-1f, 0f); // Move left
+                    else if (minDist == distToTop)
+                        awayFromEdge = new Vector2(0f, 1f); // Move down
+                    else
+                        awayFromEdge = new Vector2(0f, -1f); // Move up
+                    
+                    // Add some randomness to the direction
+                    float randomAngle = (float)(_random.NextDouble() * MathHelper.PiOver2 - MathHelper.PiOver4);
+                    float cos = (float)Math.Cos(randomAngle);
+                    float sin = (float)Math.Sin(randomAngle);
+                    Vector2 rotatedDir = new Vector2(
+                        awayFromEdge.X * cos - awayFromEdge.Y * sin,
+                        awayFromEdge.X * sin + awayFromEdge.Y * cos
+                    );
+                    
+                    // Set target 1000-1500 pixels away from current position
+                    float targetDistance = (float)(_random.NextDouble() * 500f + 1000f);
+                    newTarget = clampedPosition + rotatedDir * targetDistance;
+                }
+                
+                // Clamp to map bounds
+                float newTargetX = MathHelper.Clamp(newTarget.X, safeMargin, mapSize - safeMargin);
+                float newTargetY = MathHelper.Clamp(newTarget.Y, safeMargin, mapSize - safeMargin);
+                newTarget = new Vector2(newTargetX, newTargetY);
+                
+                // Avoid other ships' radius when setting unstuck target (try multiple times if needed)
+                int avoidAttempts = 0;
+                while (IsTooCloseToOtherShips(newTarget, friendlyShip) && avoidAttempts < 5)
+                {
+                    newTarget = AvoidOtherShipsPosition(newTarget, friendlyShip, mapSize);
+                    newTargetX = MathHelper.Clamp(newTarget.X, safeMargin, mapSize - safeMargin);
+                    newTargetY = MathHelper.Clamp(newTarget.Y, safeMargin, mapSize - safeMargin);
+                    newTarget = new Vector2(newTargetX, newTargetY);
+                    avoidAttempts++;
+                }
+                
+                friendlyShip.SetTargetPosition(newTarget);
+                
+                // Reset stuck timer and progress tracking
+                var shipStateForStuck = _getOrCreateShipState(friendlyShip);
+                shipStateForStuck.StuckTimer = 0f;
+                shipStateForStuck.ClosestDistanceToTarget = float.MaxValue;
+                shipStateForStuck.NoProgressTimer = 0f;
+            }
+        }
+
+        private void HandleEnemyShipCollisionAvoidance(EnemyShip enemyShip, float deltaTime, float mapSize)
+        {
+            if (_friendlyShips == null || _enemyShips == null) return;
+
+            // Collision avoidance: use same orbital motion system as friendly ships
+            float avoidanceRadius = enemyShip.AvoidanceDetectionRange;
+            float avoidanceForce = 300f;
+            Vector2 avoidanceVector = Vector2.Zero;
+            
+            // Calculate look-ahead target position
+            Vector2 lookAheadTarget = enemyShip.Position;
+            if (enemyShip.IsActivelyMoving())
+            {
+            float shipRotation = enemyShip.Rotation;
+                Vector2 lookAheadDirection = new Vector2(
+                    (float)Math.Sin(shipRotation),
+                    -(float)Math.Cos(shipRotation)
+                );
+                float lookAheadDist = enemyShip.MoveSpeed * enemyShip.LookAheadDistance;
+                lookAheadTarget = enemyShip.Position + lookAheadDirection * lookAheadDist;
+            }
+            
+            // Avoid friendly ships with orbital motion
+            foreach (var friendlyShip in _friendlyShips)
+            {
+                Vector2 toFriendly = friendlyShip.Position - enemyShip.Position;
+                float distance = toFriendly.Length();
+                float otherAvoidanceRadius = friendlyShip.AvoidanceDetectionRange;
+                float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherAvoidanceRadius);
+                float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                
+                // Check if look-ahead target is within other ship's avoidance radius
+                Vector2 toLookAheadFromFriendly = lookAheadTarget - friendlyShip.Position;
+                float lookAheadDistanceFromFriendly = toLookAheadFromFriendly.Length();
+                bool lookAheadInRadius = lookAheadDistanceFromFriendly < effectiveAvoidanceRadius;
+                
+                if ((distance < avoidanceDetectionRange || lookAheadInRadius) && distance > 0.1f)
+                {
+                    toFriendly.Normalize();
+                    Vector2 radialDirection = -toFriendly;
+                    
+                    // Calculate tangential direction for orbital motion
+                    Vector2 tangentialDirection;
+                    if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                    {
+                        Vector2 shipVelocity = enemyShip.Velocity;
+                        shipVelocity.Normalize();
+                        Vector2 tan1 = new Vector2(-toFriendly.Y, toFriendly.X);
+                        Vector2 tan2 = new Vector2(toFriendly.Y, -toFriendly.X);
+                        float dot1 = Vector2.Dot(shipVelocity, tan1);
+                        float dot2 = Vector2.Dot(shipVelocity, tan2);
+                        tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                    }
+                    else
+                    {
+                        tangentialDirection = new Vector2(-toFriendly.Y, toFriendly.X);
+                    }
+                    tangentialDirection.Normalize();
+                    
+                    // Calculate avoidance strength
+                    float avoidanceStrength;
+                    if (lookAheadInRadius)
+                    {
+                        float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromFriendly) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.5f + lookAheadPenetration * 2f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius)
+                    {
+                        float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.0f + penetration * 1.5f;
+                    }
+                    else
+                    {
+                        avoidanceStrength = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                    }
+                    
+                    // Blend radial and tangential forces for orbital motion
+                    float radialWeight, tangentialWeight;
+                    if (distance < effectiveAvoidanceRadius)
+                    {
+                        radialWeight = 0.9f;
+                        tangentialWeight = 0.1f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.1f)
+                    {
+                        radialWeight = 0.7f;
+                        tangentialWeight = 0.3f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.3f)
+                    {
+                        radialWeight = 0.5f;
+                        tangentialWeight = 0.5f;
+                    }
+                    else
+                    {
+                        radialWeight = 0.2f;
+                        tangentialWeight = 0.8f;
+                    }
+                    
+                    Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                    orbitalDirection.Normalize();
+                    avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce;
+                }
+            }
+            
+            // Avoid player ship with orbital motion (but still pursue for attack)
+            if (_playerShip != null)
+            {
+                Vector2 toPlayer = _playerShip.Position - enemyShip.Position;
+                float distance = toPlayer.Length();
+                float playerAvoidanceRadius = _playerShip.AvoidanceDetectionRange;
+                float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, playerAvoidanceRadius);
+                float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                
+                // Check if look-ahead target is within player's avoidance radius
+                Vector2 toLookAheadFromPlayer = lookAheadTarget - _playerShip.Position;
+                float lookAheadDistanceFromPlayer = toLookAheadFromPlayer.Length();
+                bool lookAheadInPlayerRadius = lookAheadDistanceFromPlayer < effectiveAvoidanceRadius;
+                
+                // Avoid when close or when look-ahead hits player's radius
+                if ((distance < avoidanceDetectionRange || lookAheadInPlayerRadius) && distance > 0.1f)
+                {
+                    toPlayer.Normalize();
+                    Vector2 radialDirection = -toPlayer;
+                    
+                    // Calculate tangential direction
+                    Vector2 tangentialDirection;
+                    if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                    {
+                        Vector2 shipVelocity = enemyShip.Velocity;
+                        shipVelocity.Normalize();
+                        Vector2 tan1 = new Vector2(-toPlayer.Y, toPlayer.X);
+                        Vector2 tan2 = new Vector2(toPlayer.Y, -toPlayer.X);
+                        float dot1 = Vector2.Dot(shipVelocity, tan1);
+                        float dot2 = Vector2.Dot(shipVelocity, tan2);
+                        tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                    }
+                    else
+                    {
+                        tangentialDirection = new Vector2(-toPlayer.Y, toPlayer.X);
+                    }
+                    tangentialDirection.Normalize();
+                    
+                    // Calculate avoidance strength - stronger when very close to prevent getting stuck
+                    float avoidanceStrength;
+                    if (distance < effectiveAvoidanceRadius)
+                    {
+                        float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.5f + penetration * 2f;
+                    }
+                    else if (lookAheadInPlayerRadius)
+                    {
+                        float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromPlayer) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.2f + lookAheadPenetration * 1.5f;
+                    }
+                    else
+                    {
+                        float approachFactor = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                        avoidanceStrength = 0.8f + approachFactor * 0.7f;
+                    }
+                    
+                    // Blend radial and tangential - more radial when very close
+                    float radialWeight, tangentialWeight;
+                    if (distance < effectiveAvoidanceRadius)
+                    {
+                        radialWeight = 0.8f;
+                        tangentialWeight = 0.2f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.1f)
+                    {
+                        radialWeight = 0.6f;
+                        tangentialWeight = 0.4f;
+                    }
+                    else
+                    {
+                        radialWeight = 0.3f;
+                        tangentialWeight = 0.7f;
+                    }
+                    
+                    Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                    orbitalDirection.Normalize();
+                    avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce;
+                }
+            }
+            
+            // Avoid other enemy ships with orbital motion
+            foreach (var otherEnemyShip in _enemyShips)
+            {
+                if (otherEnemyShip == enemyShip) continue;
+                
+                Vector2 toOtherEnemy = otherEnemyShip.Position - enemyShip.Position;
+                float distance = toOtherEnemy.Length();
+                float otherAvoidanceRadius = otherEnemyShip.AvoidanceDetectionRange;
+                float effectiveAvoidanceRadius = Math.Max(avoidanceRadius, otherAvoidanceRadius);
+                float avoidanceDetectionRange = effectiveAvoidanceRadius * 1.5f;
+                
+                // Check if look-ahead target is within other enemy's avoidance radius
+                Vector2 toLookAheadFromOtherEnemy = lookAheadTarget - otherEnemyShip.Position;
+                float lookAheadDistanceFromOtherEnemy = toLookAheadFromOtherEnemy.Length();
+                bool lookAheadInOtherEnemyRadius = lookAheadDistanceFromOtherEnemy < effectiveAvoidanceRadius;
+                
+                if ((distance < avoidanceDetectionRange || lookAheadInOtherEnemyRadius) && distance > 0.1f)
+                {
+                    toOtherEnemy.Normalize();
+                    Vector2 radialDirection = -toOtherEnemy;
+                    
+                    // Calculate tangential direction
+                    Vector2 tangentialDirection;
+                    if (enemyShip.IsActivelyMoving() && enemyShip.Velocity.LengthSquared() > 100f)
+                    {
+                        Vector2 shipVelocity = enemyShip.Velocity;
+                        shipVelocity.Normalize();
+                        Vector2 tan1 = new Vector2(-toOtherEnemy.Y, toOtherEnemy.X);
+                        Vector2 tan2 = new Vector2(toOtherEnemy.Y, -toOtherEnemy.X);
+                        float dot1 = Vector2.Dot(shipVelocity, tan1);
+                        float dot2 = Vector2.Dot(shipVelocity, tan2);
+                        tangentialDirection = dot1 > dot2 ? tan1 : tan2;
+                    }
+                    else
+                    {
+                        tangentialDirection = new Vector2(-toOtherEnemy.Y, toOtherEnemy.X);
+                    }
+                    tangentialDirection.Normalize();
+                    
+                    // Calculate avoidance strength
+                    float avoidanceStrength;
+                    if (lookAheadInOtherEnemyRadius)
+                    {
+                        float lookAheadPenetration = (effectiveAvoidanceRadius - lookAheadDistanceFromOtherEnemy) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.5f + lookAheadPenetration * 2f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius)
+                    {
+                        float penetration = (effectiveAvoidanceRadius - distance) / effectiveAvoidanceRadius;
+                        avoidanceStrength = 1.0f + penetration * 1.5f;
+                    }
+                    else
+                    {
+                        avoidanceStrength = (avoidanceDetectionRange - distance) / (avoidanceDetectionRange - effectiveAvoidanceRadius);
+                    }
+                    
+                    // Blend radial and tangential forces
+                    float radialWeight, tangentialWeight;
+                    if (distance < effectiveAvoidanceRadius)
+                    {
+                        radialWeight = 0.9f;
+                        tangentialWeight = 0.1f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.1f)
+                    {
+                        radialWeight = 0.7f;
+                        tangentialWeight = 0.3f;
+                    }
+                    else if (distance < effectiveAvoidanceRadius * 1.3f)
+                    {
+                        radialWeight = 0.5f;
+                        tangentialWeight = 0.5f;
+                    }
+                    else
+                    {
+                        radialWeight = 0.2f;
+                        tangentialWeight = 0.8f;
+                    }
+                    
+                    Vector2 orbitalDirection = radialDirection * radialWeight + tangentialDirection * tangentialWeight;
+                    orbitalDirection.Normalize();
+                    avoidanceVector += orbitalDirection * avoidanceStrength * avoidanceForce;
+                }
+            }
+            
+            // Apply avoidance vector if significant
+            if (avoidanceVector.LengthSquared() > 100f)
+            {
+                Vector2 currentTarget = enemyShip.TargetPosition;
+                Vector2 avoidanceTarget = enemyShip.Position + avoidanceVector * deltaTime;
+                // Blend avoidance with current target (don't completely override pursuit)
+                Vector2 blendedTarget = Vector2.Lerp(currentTarget, avoidanceTarget, 0.3f);
+                enemyShip.SetTargetPosition(blendedTarget);
+            }
+        }
+
+        private void UpdateShipTracking(FriendlyShip friendlyShip)
+        {
+            if (_getOrCreateShipState == null) return;
+
+            // Update last direction for smooth pathing based on velocity
+            if (friendlyShip.IsActivelyMoving())
+            {
+                // Use velocity direction if available, otherwise calculate from position change
+                Vector2 velDir = Vector2.Zero;
+                var shipStateForDir = _getOrCreateShipState(friendlyShip);
+                if (shipStateForDir.LastPosition != Vector2.Zero)
+                {
+                    Vector2 posChange = friendlyShip.Position - shipStateForDir.LastPosition;
+                    if (posChange.LengthSquared() > 1f)
+                    {
+                        posChange.Normalize();
+                        velDir = posChange;
+                    }
+                }
+                
+                // Only update if we have a valid direction
+                if (velDir.LengthSquared() > 0.1f)
+                {
+                    var shipStateForDirFinal = _getOrCreateShipState(friendlyShip);
+                    shipStateForDirFinal.LastDirection = velDir;
+                }
+            }
+        }
+
     }
 }
 
